@@ -8,16 +8,158 @@ import csv
 import io
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import requests
+import re
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+_CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+if _CUR_DIR not in sys.path:
+    sys.path.insert(0, _CUR_DIR)
 try:
-    from backend.data_engine import engine
-except ModuleNotFoundError:
     from data_engine import engine
+except ModuleNotFoundError:
+    from backend.data_engine import engine
 
 app = FastAPI(title="CVM Primários Monitor PRO API", version="2.0.0")
 
 def _val(x):
-    return x.default if hasattr(x, "default") else x
+    v = x.default if hasattr(x, "default") else x
+    if isinstance(v, (list, tuple, set)):
+        if not v:
+            return "Todos"
+        cleaned = [str(i).strip() for i in v if str(i).strip()]
+        if not cleaned or any(i == "Todos" or i.startswith("Todos os") for i in cleaned):
+            return "Todos"
+        return cleaned if len(cleaned) > 1 else cleaned[0]
+    if v and isinstance(v, str):
+        s = v.strip()
+        if s == "Todos" or s.startswith("Todos os"):
+            return "Todos"
+    return v
+
+def _match_idx(row_idx, filter_idx):
+    if filter_idx == "Todos" or not filter_idx:
+        return True
+    if isinstance(filter_idx, str):
+        items = [i.strip() for i in filter_idx.split(",") if i.strip()]
+        if not items or any(i == "Todos" for i in items):
+            return True
+        return any(row_idx == i or i.lower() in str(row_idx).lower() for i in items)
+    if isinstance(filter_idx, (list, tuple, set)):
+        items = []
+        for v in filter_idx:
+            items.extend([i.strip() for i in str(v).split(",") if i.strip()])
+        if not items or any(i == "Todos" for i in items):
+            return True
+        return any(row_idx == i or str(i).lower() in str(row_idx).lower() for i in items)
+    return row_idx == filter_idx or str(filter_idx).lower() in str(row_idx).lower()
+
+_SRE_LOCK = threading.Lock()
+_SRE_NEGATIVE_CACHE = {}
+
+def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
+    if not isinstance(r, dict):
+        return r
+    if r.get("Taxa_Declarada") and r.get("Caracteristicas_CVM") and r.get("Vencimento") != "N/I":
+        return r
+        
+    req_id = None
+    if str(r.get("Numero_Requerimento", "")).isdigit():
+        req_id = str(r.get("Numero_Requerimento", "")).strip()
+    elif str(r.get("Id_Processo", "")).isdigit():
+        req_id = str(r.get("Id_Processo", "")).strip()
+        
+    if not req_id:
+        return r
+        
+    with _SRE_LOCK:
+        if req_id in _SRE_NEGATIVE_CACHE:
+            if time.time() - _SRE_NEGATIVE_CACHE[req_id] < 14400:
+                return r
+            else:
+                del _SRE_NEGATIVE_CACHE[req_id]
+        
+    try:
+        api_url = f"https://web.cvm.gov.br/sre-publico-cvm/rest/sitePublico/pesquisar/requerimento/{req_id}"
+        resp = requests.get(api_url, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            taxa_encontrada = None
+            campos_encontrados = []
+            venc_encontrado = None
+            
+            if data.get("grupos"):
+                for g in data["grupos"]:
+                    for s in g.get("series", []):
+                        for lote_key in ("loteFinal", "loteInicial"):
+                            lote = s.get(lote_key)
+                            if lote and isinstance(lote, dict):
+                                if not campos_encontrados and lote.get("camposCadastrados"):
+                                    campos_encontrados = lote["camposCadastrados"]
+                                
+                                t = lote.get("taxaRemuneracao", "")
+                                if t and str(t).strip() and str(t).strip() not in ("-", "--", "Não Informado", "0", "0%"):
+                                    taxa_encontrada = str(t).strip()
+                                
+                                if lote.get("camposCadastrados"):
+                                    for c in lote["camposCadastrados"]:
+                                        nm = str(c.get("campoNome", "")).lower()
+                                        val = str(c.get("campoValor", "")).strip()
+                                        if not taxa_encontrada and any(k in nm for k in ("remuneração final", "remuneração máxima", "taxa de remuneração", "juros")):
+                                            if val and val not in ("-", "--", "Não Informado", "0", "0%"):
+                                                taxa_encontrada = val
+                                        if not venc_encontrado and ("venc" in nm or "data de vencimento" in nm):
+                                            if val and val not in ("-", "--", "00/00/0000", "Não Informado"):
+                                                venc_encontrado = val
+                        if taxa_encontrada and campos_encontrados and venc_encontrado: break
+                    if taxa_encontrada and campos_encontrados and venc_encontrado: break
+            
+            with _SRE_LOCK:
+                if taxa_encontrada:
+                    r["Taxa_Juros"] = taxa_encontrada
+                    r["Taxa_Declarada"] = True
+                    r["Remuneracao_API_CVM"] = taxa_encontrada
+                if campos_encontrados:
+                    r["Caracteristicas_CVM"] = campos_encontrados
+                if venc_encontrado:
+                    if len(venc_encontrado) >= 10 and venc_encontrado[2] == "/":
+                        parts = venc_encontrado.split("/")
+                        r["Vencimento"] = f"{parts[1]}/{parts[2][-2:]}"
+                    elif len(venc_encontrado) >= 10 and venc_encontrado[4] == "-":
+                        parts = venc_encontrado.split("-")
+                        r["Vencimento"] = f"{parts[1]}/{parts[0][-2:]}"
+                    elif len(venc_encontrado) >= 7 and venc_encontrado[2] == "/":
+                        r["Vencimento"] = f"{venc_encontrado[:2]}/{venc_encontrado[-2:]}"
+                    else:
+                        r["Vencimento"] = venc_encontrado[:7]
+                
+                if not taxa_encontrada and not campos_encontrados and not venc_encontrado:
+                    _SRE_NEGATIVE_CACHE[req_id] = time.time()
+                elif r.get("Taxa_Juros"):
+                    t_upper = str(r["Taxa_Juros"]).upper()
+                    if any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %")):
+                        r["Indexador"] = "CDI / DI"
+                        if r.get("Taxa_Declarada") or not any(w in t_upper for w in ("VER DOSSIÊ", "A DEFINIR", "NÃO INFORMADO")):
+                            r["Indexador_Inferido"] = False
+                    elif any(k in t_upper for k in ("IPCA", "INPC", "IGP-M", "IGPM", "TR ")):
+                        r["Indexador"] = "IPCA / Inflação"
+                        if r.get("Taxa_Declarada") or not any(w in t_upper for w in ("VER DOSSIÊ", "A DEFINIR", "NÃO INFORMADO")):
+                            r["Indexador_Inferido"] = False
+                    elif any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX")) or re.match(r'^\d+[\d,.]*\s*%', str(r["Taxa_Juros"])):
+                        r["Indexador"] = "PRÉ (Prefixado)"
+                        if r.get("Taxa_Declarada") or not any(w in t_upper for w in ("VER DOSSIÊ", "A DEFINIR", "NÃO INFORMADO")):
+                            r["Indexador_Inferido"] = False
+                            
+                    r["Referencia_NTNB"] = engine._extract_ntnb_reference(r)
+        else:
+            with _SRE_LOCK:
+                _SRE_NEGATIVE_CACHE[req_id] = time.time()
+    except Exception:
+        with _SRE_LOCK:
+            _SRE_NEGATIVE_CACHE[req_id] = time.time()
+        
+    return r
 
 # Enable CORS for local Vite development
 app.add_middleware(
@@ -51,14 +193,18 @@ def get_kpis(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
-    busca: str = Query("")
+    busca: str = Query(""),
+    incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
+    
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     if not rows:
         return {
             "volume_total": 0.0,
+            "volume_estimado": 0.0,
             "qtd_ofertas": 0,
             "taxa_auto": 0.0,
             "ticket_medio": 0.0,
@@ -68,32 +214,36 @@ def get_kpis(
             "vol_estrangeiro": 0.0
         }
     
-    total_vol = sum(r["Volume_Float"] for r in rows)
+    vol_confirmado = sum(r["Volume_Float"] for r in rows if not r.get("Is_Estimated_Vol") and r["Volume_Float"] > 0)
+    vol_estimado = sum(r["Volume_Float"] for r in rows if r.get("Is_Estimated_Vol"))
+    
+    total_vol = (vol_confirmado + vol_estimado) if inc_est else vol_confirmado
     qtd = len(rows)
     auto_cnt = sum(1 for r in rows if "automático" in r["Rito"].lower())
     taxa_auto = (auto_cnt / qtd * 100.0) if qtd > 0 else 0.0
     ticket_medio = (total_vol / qtd) if qtd > 0 else 0.0
     
-    vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in rows)
-    vol_fd = sum(r["Vol_Fundos"] for r in rows)
-    vol_est = sum(r["Vol_Estrangeiro"] for r in rows)
+    vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in rows if not (r.get("Is_Estimated_Vol") and not inc_est))
+    vol_fd = sum(r["Vol_Fundos"] for r in rows if not (r.get("Is_Estimated_Vol") and not inc_est))
+    vol_est = sum(r["Vol_Estrangeiro"] for r in rows if not (r.get("Is_Estimated_Vol") and not inc_est))
     
-    vol_confirmado = sum(r["Volume_Float"] for r in rows if not r.get("Alocacao_Pendente") and r["Volume_Float"] > 0)
     taxa_varejo = (vol_pf / vol_confirmado * 100.0) if vol_confirmado > 0 else ((vol_pf / total_vol * 100.0) if total_vol > 0 else 0.0)
     
     bookbuilding_rows = [r for r in rows if r.get("Alocacao_Pendente") or "a definir" in str(r.get("Taxa_Juros")).lower() or "bookbuilding" in str(r.get("Taxa_Juros")).lower()]
-    vol_bookbuilding = sum(r["Volume_Float"] for r in bookbuilding_rows)
+    vol_bookbuilding = sum(r["Volume_Float"] for r in bookbuilding_rows if not (r.get("Is_Estimated_Vol") and not inc_est))
     qtd_bookbuilding = len(bookbuilding_rows)
     
-    vol_cdi = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "CDI / DI")
-    vol_ipca = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "IPCA / Inflação")
-    vol_pre = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "PRÉ (Prefixado)")
+    vol_cdi = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "CDI / DI" and not (r.get("Is_Estimated_Vol") and not inc_est))
+    vol_ipca = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "IPCA / Inflação" and not (r.get("Is_Estimated_Vol") and not inc_est))
+    vol_pre = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "PRÉ (Prefixado)" and not (r.get("Is_Estimated_Vol") and not inc_est))
     share_cdi = (vol_cdi / total_vol * 100.0) if total_vol > 0 else 0.0
     share_ipca = (vol_ipca / total_vol * 100.0) if total_vol > 0 else 0.0
     share_pre = (vol_pre / total_vol * 100.0) if total_vol > 0 else 0.0
     
     return {
         "volume_total": total_vol,
+        "volume_confirmado": vol_confirmado,
+        "volume_estimado": vol_estimado,
         "qtd_ofertas": qtd,
         "taxa_auto": round(taxa_auto, 1),
         "ticket_medio": ticket_medio,
@@ -118,21 +268,32 @@ def get_charts_overview(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
-    busca: str = Query("")
+    busca: str = Query(""),
+    incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
+    # If specific indexador is filtered, enrich top candidate offers concurrently so NTN-B references and real spreads/maturities are precise
+    if indexador != "Todos":
+        candidates_charts = [x for x in rows[:10] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))]
+        if candidates_charts:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), candidates_charts))
+        rows = [x for x in rows if _match_idx(x["Indexador"], indexador)]
+        
     temp_map = defaultdict(lambda: {"Automático": 0.0, "Ordinário": 0.0, "Total": 0.0})
     for r in rows:
-        y = r["Ano"]
-        vol = r["Volume_Float"]
-        if "automático" in r["Rito"].lower():
-            temp_map[y]["Automático"] += vol
-        else:
-            temp_map[y]["Ordinário"] += vol
-        temp_map[y]["Total"] += vol
+        if not (r.get("Is_Estimated_Vol") and not inc_est):
+            y = r["Ano"]
+            vol = r["Volume_Float"]
+            if "automático" in r["Rito"].lower():
+                temp_map[y]["Automático"] += vol
+            else:
+                temp_map[y]["Ordinário"] += vol
+            temp_map[y]["Total"] += vol
         
     sorted_years = sorted(temp_map.keys())
     temporal_data = {
@@ -145,14 +306,15 @@ def get_charts_overview(
     month_names = {"01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez"}
     month_map = defaultdict(lambda: {"CDI": 0.0, "IPCA": 0.0, "PRE": 0.0})
     for r in rows:
-        dt = str(r.get("Data_Clean", ""))
-        if len(dt) >= 7 and dt[:4].isdigit() and dt[4] == "-":
-            ym = dt[:7]
-            if dt[:4] in ("2024", "2025", "2026"):
-                idx_type = r.get("Indexador", "")
-                if idx_type == "CDI / DI": month_map[ym]["CDI"] += r["Volume_Float"]
-                elif idx_type == "IPCA / Inflação": month_map[ym]["IPCA"] += r["Volume_Float"]
-                elif idx_type == "PRÉ (Prefixado)": month_map[ym]["PRE"] += r["Volume_Float"]
+        if not (r.get("Is_Estimated_Vol") and not inc_est):
+            dt = str(r.get("Data_Clean", ""))
+            if len(dt) >= 7 and dt[:4].isdigit() and dt[4] == "-":
+                ym = dt[:7]
+                if dt[:4] in ("2024", "2025", "2026"):
+                    idx_type = r.get("Indexador", "")
+                    if idx_type == "CDI / DI": month_map[ym]["CDI"] += r["Volume_Float"]
+                    elif idx_type == "IPCA / Inflação": month_map[ym]["IPCA"] += r["Volume_Float"]
+                    elif idx_type == "PRÉ (Prefixado)": month_map[ym]["PRE"] += r["Volume_Float"]
                 
     sorted_months = sorted(month_map.keys())
     m_labels = [f"{month_names.get(ym[5:7], ym[5:7])}/{ym[2:4]}" for ym in sorted_months]
@@ -168,7 +330,8 @@ def get_charts_overview(
     for r in rows:
         a = r["Ativo"]
         if a and a != "Não Informado":
-            ativo_vol[a] += r["Volume_Float"]
+            if not (r.get("Is_Estimated_Vol") and not inc_est):
+                ativo_vol[a] += r["Volume_Float"]
             ativo_cnt[a] += 1
             
     top_ativos_list = sorted(ativo_vol.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -189,10 +352,125 @@ def get_charts_overview(
         "counts": [v for k, v in top_status]
     }
     
+    # 1. Histórico de volume de emissão mês a mês
+    monthly_volume = {
+        "labels": m_labels,
+        "volumes": [round(month_map[ym]["CDI"] + month_map[ym]["IPCA"] + month_map[ym]["PRE"], 2) for ym in sorted_months],
+        "cdi": [round(month_map[ym]["CDI"], 2) for ym in sorted_months],
+        "ipca": [round(month_map[ym]["IPCA"], 2) for ym in sorted_months],
+        "pre": [round(month_map[ym]["PRE"], 2) for ym in sorted_months]
+    }
+    
+    # 2. Coordenadores com mais envolvimento em emissão por volume (gráfico de barras)
+    lider_vol = defaultdict(float)
+    lider_cnt = defaultdict(int)
+    for r in rows:
+        l = r["Lider"]
+        if l and l != "Não Informado":
+            if not (r.get("Is_Estimated_Vol") and not inc_est):
+                lider_vol[l] += r["Volume_Float"]
+            lider_cnt[l] += 1
+    top_lideres_list = sorted(lider_vol.items(), key=lambda x: x[1], reverse=True)[:12]
+    top_coordenadores = {
+        "labels": [k for k, v in top_lideres_list],
+        "volumes": [round(v, 2) for k, v in top_lideres_list],
+        "counts": [lider_cnt[k] for k, v in top_lideres_list]
+    }
+    
+    # 3. Volume emitido por emissor (gráfico de barras)
+    emissor_vol = defaultdict(float)
+    emissor_cnt = defaultdict(int)
+    for r in rows:
+        e = r["Emissor"]
+        if e and e != "Não Informado":
+            if not (r.get("Is_Estimated_Vol") and not inc_est):
+                emissor_vol[e] += r["Volume_Float"]
+            emissor_cnt[e] += 1
+    top_emiss_list = sorted(emissor_vol.items(), key=lambda x: x[1], reverse=True)[:12]
+    top_emissores = {
+        "labels": [k for k, v in top_emiss_list],
+        "volumes": [round(v, 2) for k, v in top_emiss_list],
+        "counts": [emissor_cnt[k] for k, v in top_emiss_list]
+    }
+    
+    # 4. Vencimento X Spread
+    venc_map_cdi = defaultdict(list)
+    venc_map_ipca = defaultdict(list)
+    venc_points = []
+    for r in rows:
+        v = str(r.get("Vencimento", "")).strip()
+        t = str(r.get("Taxa_Juros", "")).strip()
+        if v and v != "N/I" and t and "DEFINIR" not in t.upper() and "DOSSIÊ" not in t.upper():
+            v_year = ""
+            if len(v) >= 5 and "/" in v:
+                v_year = "20" + v.split("/")[-1][-2:] if v.split("/")[-1].isdigit() else ""
+            elif len(v) == 4 and v.isdigit():
+                v_year = v
+            if not v_year or not v_year.isdigit() or int(v_year) < 2024 or int(v_year) > 2060:
+                continue
+            
+            # Extract numeric rate/spread
+            val_float = None
+            m = re.search(r'[\+\s](\d+[\d,.]*)\s*%', t) or re.search(r'^(\d+[\d,.]*)\s*%', t)
+            if m:
+                try:
+                    val_float = float(m.group(1).replace(",", "."))
+                except Exception:
+                    pass
+            if val_float is not None and 0.01 <= val_float <= 30.0:
+                idx_lbl = r.get("Indexador", "")
+                venc_points.append({
+                    "x": f"{v_year}",
+                    "vencimento": v,
+                    "y": round(val_float, 2),
+                    "emissor": r["Emissor"],
+                    "taxa": t,
+                    "indexador": idx_lbl,
+                    "volume": r["Volume_Float"]
+                })
+                if idx_lbl == "CDI / DI":
+                    venc_map_cdi[v_year].append(val_float)
+                elif idx_lbl == "IPCA / Inflação":
+                    venc_map_ipca[v_year].append(val_float)
+                    
+    sorted_v_years = sorted(list(set(list(venc_map_cdi.keys()) + list(venc_map_ipca.keys()))))[:12]
+    vencimento_spread = {
+        "labels": sorted_v_years,
+        "cdi_spread": [round(sum(venc_map_cdi[y])/len(venc_map_cdi[y]), 2) if venc_map_cdi[y] else 0.0 for y in sorted_v_years],
+        "ipca_spread": [round(sum(venc_map_ipca[y])/len(venc_map_ipca[y]), 2) if venc_map_ipca[y] else 0.0 for y in sorted_v_years],
+        "points": venc_points[:150]
+    }
+    
+    # 5. Volume emitido indexado em cada B (NTN-B)
+    ntnb_vol = defaultdict(float)
+    ntnb_cnt = defaultdict(int)
+    for r in rows:
+        if r.get("Indexador") == "IPCA / Inflação" and not (r.get("Is_Estimated_Vol") and not inc_est):
+            ref = str(r.get("Referencia_NTNB", "Outras / Não Espec.")).strip()
+            if not ref or ref == "N/I" or not ref.startswith("NTN-B"):
+                ref = "Outras / Não Espec."
+            ntnb_vol[ref] += r["Volume_Float"]
+            ntnb_cnt[ref] += 1
+            
+    ntnb_sorted_keys = sorted([k for k in ntnb_vol.keys() if k != "Outras / Não Espec."], key=lambda x: x.split()[-1] if x.split()[-1].isdigit() else "9999")
+    if "Outras / Não Espec." in ntnb_vol and ntnb_vol["Outras / Não Espec."] > 0:
+        ntnb_sorted_keys.append("Outras / Não Espec.")
+        
+    ntnb_volume = {
+        "labels": ntnb_sorted_keys,
+        "volumes": [round(ntnb_vol[k], 2) for k in ntnb_sorted_keys],
+        "counts": [ntnb_cnt[k] for k in ntnb_sorted_keys]
+    }
+    
     return {
         "temporal": temporal_data,
         "monthly_indexer": monthly_indexer,
+        "monthly_volume": monthly_volume,
         "top_ativos": top_ativos,
+        "top_coordenadores": top_coordenadores,
+        "top_emissores": top_emissores,
+        "vencimento_spread": vencimento_spread,
+        "ntnb_volume": ntnb_volume,
         "status_funnel": status_data
     }
 
@@ -205,24 +483,27 @@ def get_charts_investors(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
-    busca: str = Query("")
+    busca: str = Query(""),
+    incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
-    vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in rows)
-    vol_fd = sum(r["Vol_Fundos"] for r in rows)
-    vol_est = sum(r["Vol_Estrangeiro"] for r in rows)
-    vol_prev = sum(r["Vol_Previdencia"] for r in rows)
-    vol_seg = sum(r["Vol_Seguradoras"] for r in rows)
-    vol_inst = sum(r["Vol_Instituicoes"] for r in rows)
+    valid_rows = [r for r in rows if not (r.get("Is_Estimated_Vol") and not inc_est)]
+    vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in valid_rows)
+    vol_fd = sum(r["Vol_Fundos"] for r in valid_rows)
+    vol_est = sum(r["Vol_Estrangeiro"] for r in valid_rows)
+    vol_prev = sum(r["Vol_Previdencia"] for r in valid_rows)
+    vol_seg = sum(r["Vol_Seguradoras"] for r in valid_rows)
+    vol_inst = sum(r["Vol_Instituicoes"] for r in valid_rows)
     
     total_alloc = vol_pf + vol_fd + vol_est + vol_prev + vol_seg + vol_inst
     if total_alloc == 0:
-        cnt_pf = sum(r["Qtd_Inv_Pessoa_Fisica"] for r in rows)
-        cnt_fd = sum(r["Qtd_Inv_Fundos"] for r in rows)
-        cnt_est = sum(r["Qtd_Inv_Estrangeiro"] for r in rows)
+        cnt_pf = sum(r["Qtd_Inv_Pessoa_Fisica"] for r in valid_rows)
+        cnt_fd = sum(r["Qtd_Inv_Fundos"] for r in valid_rows)
+        cnt_est = sum(r["Qtd_Inv_Estrangeiro"] for r in valid_rows)
         lbls = ["Pessoa Física (Varejo)", "Fundos de Investimento", "Investidor Estrangeiro"]
         vals = [cnt_pf, cnt_fd, cnt_est]
         return {
@@ -265,10 +546,12 @@ def get_rankings(
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
-    limit: int = Query(15)
+    limit: int = Query(15),
+    incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca); limit = _val(limit)
+    inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
     lider_vol = defaultdict(float)
@@ -276,7 +559,8 @@ def get_rankings(
     for r in rows:
         l = r["Lider"]
         if l and l != "Não Informado":
-            lider_vol[l] += r["Volume_Float"]
+            if not (r.get("Is_Estimated_Vol") and not inc_est):
+                lider_vol[l] += r["Volume_Float"]
             lider_cnt[l] += 1
             
     top_lideres = sorted(lider_vol.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -289,7 +573,8 @@ def get_rankings(
     for r in rows:
         e = r["Emissor"]
         if e and e != "Não Informado":
-            emissor_vol[e] += r["Volume_Float"]
+            if not (r.get("Is_Estimated_Vol") and not inc_est):
+                emissor_vol[e] += r["Volume_Float"]
             emissor_cnt[e] += 1
             
     top_emissores = sorted(emissor_vol.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -330,11 +615,26 @@ def get_offers(
     elif sort_by == "Emissor":
         rows.sort(key=lambda x: x["Emissor"], reverse=reverse)
     
-    total = len(rows)
     start = (page - 1) * page_size
+    
+    # If indexador filter is active, enrich top candidate pool first before slicing
+    if indexador != "Todos":
+        candidate_enrich = [x for x in rows[start:start + page_size + 5] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))][:10]
+        if candidate_enrich:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), candidate_enrich))
+        rows = [x for x in rows if _match_idx(x["Indexador"], indexador)]
+        
+    total = len(rows)
     end = start + page_size
     paginated = rows[start:end]
     
+    # Live concurrent enrichment of the current page rows from official CVM SRE API (do not refilter paginated or change total after slicing)
+    items_to_enrich = [x for x in paginated if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))][:12]
+    if items_to_enrich:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), items_to_enrich))
+            
     return {
         "total": total,
         "page": page,
@@ -387,7 +687,7 @@ def get_offer_detail(id_processo: str):
     clean_id = id_processo.strip()
     for r in engine.rows:
         if str(r.get("Id_Processo")).strip() == clean_id or str(r.get("Numero_Requerimento")).strip() == clean_id:
-            return r
+            return _enrich_offer_from_api(r)
     raise HTTPException(status_code=404, detail="Oferta não encontrada no banco de dados CVM.")
 
 @app.get("/api/export")

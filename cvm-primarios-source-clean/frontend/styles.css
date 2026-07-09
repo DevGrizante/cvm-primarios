@@ -12,6 +12,7 @@ body {
         radial-gradient(at 90% 15%, rgba(16, 185, 129, 0.10) 0px, transparent 50%),
         radial-gradient(at 50% 90%, rgba(59, 130, 246, 0.10) 0px, transparent 60%);
     background-attachment: fixed;
+    overflow-x: hidden;
 }
 
 .glass-card {
@@ -78,7 +79,7 @@ body {
 }
 
 .data-grid tr:hover {
-    background-color: rgba(255, 255, 255, 0.03);
+    background-color: rgba(255, 255, 255, 0.04);
 }
 
 /* Tab Active states */
@@ -109,4 +110,34 @@ body {
 
 .glow-indigo {
     box-shadow: 0 0 20px -5px rgba(99, 102, 241, 0.3);
+}
+
+.glow-amber {
+    box-shadow: 0 0 20px -5px rgba(245, 158, 11, 0.3);
+}
+
+/* Drawer Slide Over Animation */
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+    }
+    to {
+        transform: translateX(0);
+    }
+}
+
+.drawer-slide-in {
+    animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Skeleton Pulse */
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+.skeleton-bar {
+    background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s infinite;
 }

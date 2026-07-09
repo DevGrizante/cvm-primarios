@@ -2,14 +2,22 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
-from typing import Optional, List
+from typing import Optional, List, Union
 from collections import defaultdict
 import csv
 import io
 import os
-from data_engine import engine
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from backend.data_engine import engine
+except ModuleNotFoundError:
+    from data_engine import engine
 
 app = FastAPI(title="CVM Primários Monitor PRO API", version="2.0.0")
+
+def _val(x):
+    return x.default if hasattr(x, "default") else x
 
 # Enable CORS for local Vite development
 app.add_middleware(
@@ -36,15 +44,17 @@ def get_status():
 
 @app.get("/api/kpis")
 def get_kpis(
-    ano: str = Query("Recentes (2023-2026)"),
-    rito: str = Query("Todos"),
-    ativo: str = Query("Todos"),
-    status: str = Query("Todos"),
-    indexador: str = Query("Todos"),
-    publico: str = Query("Todos"),
-    regime: str = Query("Todos"),
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query("")
 ):
+    ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     if not rows:
         return {
@@ -68,7 +78,19 @@ def get_kpis(
     vol_fd = sum(r["Vol_Fundos"] for r in rows)
     vol_est = sum(r["Vol_Estrangeiro"] for r in rows)
     
-    taxa_varejo = (vol_pf / total_vol * 100.0) if total_vol > 0 else 0.0
+    vol_confirmado = sum(r["Volume_Float"] for r in rows if not r.get("Alocacao_Pendente") and r["Volume_Float"] > 0)
+    taxa_varejo = (vol_pf / vol_confirmado * 100.0) if vol_confirmado > 0 else ((vol_pf / total_vol * 100.0) if total_vol > 0 else 0.0)
+    
+    bookbuilding_rows = [r for r in rows if r.get("Alocacao_Pendente") or "a definir" in str(r.get("Taxa_Juros")).lower() or "bookbuilding" in str(r.get("Taxa_Juros")).lower()]
+    vol_bookbuilding = sum(r["Volume_Float"] for r in bookbuilding_rows)
+    qtd_bookbuilding = len(bookbuilding_rows)
+    
+    vol_cdi = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "CDI / DI")
+    vol_ipca = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "IPCA / Inflação")
+    vol_pre = sum(r["Volume_Float"] for r in rows if r["Indexador"] == "PRÉ (Prefixado)")
+    share_cdi = (vol_cdi / total_vol * 100.0) if total_vol > 0 else 0.0
+    share_ipca = (vol_ipca / total_vol * 100.0) if total_vol > 0 else 0.0
+    share_pre = (vol_pre / total_vol * 100.0) if total_vol > 0 else 0.0
     
     return {
         "volume_total": total_vol,
@@ -78,20 +100,28 @@ def get_kpis(
         "taxa_varejo": round(taxa_varejo, 2),
         "vol_pessoa_fisica": vol_pf,
         "vol_fundos": vol_fd,
-        "vol_estrangeiro": vol_est
+        "vol_estrangeiro": vol_est,
+        "vol_confirmado": vol_confirmado,
+        "vol_bookbuilding": vol_bookbuilding,
+        "qtd_bookbuilding": qtd_bookbuilding,
+        "share_cdi": round(share_cdi, 1),
+        "share_ipca": round(share_ipca, 1),
+        "share_pre": round(share_pre, 1)
     }
 
 @app.get("/api/charts/overview")
 def get_charts_overview(
-    ano: str = Query("Recentes (2023-2026)"),
-    rito: str = Query("Todos"),
-    ativo: str = Query("Todos"),
-    status: str = Query("Todos"),
-    indexador: str = Query("Todos"),
-    publico: str = Query("Todos"),
-    regime: str = Query("Todos"),
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query("")
 ):
+    ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
     temp_map = defaultdict(lambda: {"Automático": 0.0, "Ordinário": 0.0, "Total": 0.0})
@@ -110,6 +140,27 @@ def get_charts_overview(
         "automatico": [round(temp_map[y]["Automático"], 2) for y in sorted_years],
         "ordinario": [round(temp_map[y]["Ordinário"], 2) for y in sorted_years],
         "total": [round(temp_map[y]["Total"], 2) for y in sorted_years]
+    }
+    
+    month_names = {"01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez"}
+    month_map = defaultdict(lambda: {"CDI": 0.0, "IPCA": 0.0, "PRE": 0.0})
+    for r in rows:
+        dt = str(r.get("Data_Clean", ""))
+        if len(dt) >= 7 and dt[:4].isdigit() and dt[4] == "-":
+            ym = dt[:7]
+            if dt[:4] in ("2024", "2025", "2026"):
+                idx_type = r.get("Indexador", "")
+                if idx_type == "CDI / DI": month_map[ym]["CDI"] += r["Volume_Float"]
+                elif idx_type == "IPCA / Inflação": month_map[ym]["IPCA"] += r["Volume_Float"]
+                elif idx_type == "PRÉ (Prefixado)": month_map[ym]["PRE"] += r["Volume_Float"]
+                
+    sorted_months = sorted(month_map.keys())
+    m_labels = [f"{month_names.get(ym[5:7], ym[5:7])}/{ym[2:4]}" for ym in sorted_months]
+    monthly_indexer = {
+        "labels": m_labels,
+        "cdi": [round(month_map[ym]["CDI"], 2) for ym in sorted_months],
+        "ipca": [round(month_map[ym]["IPCA"], 2) for ym in sorted_months],
+        "pre": [round(month_map[ym]["PRE"], 2) for ym in sorted_months]
     }
     
     ativo_vol = defaultdict(float)
@@ -140,21 +191,24 @@ def get_charts_overview(
     
     return {
         "temporal": temporal_data,
+        "monthly_indexer": monthly_indexer,
         "top_ativos": top_ativos,
         "status_funnel": status_data
     }
 
 @app.get("/api/charts/investors")
 def get_charts_investors(
-    ano: str = Query("Recentes (2023-2026)"),
-    rito: str = Query("Todos"),
-    ativo: str = Query("Todos"),
-    status: str = Query("Todos"),
-    indexador: str = Query("Todos"),
-    publico: str = Query("Todos"),
-    regime: str = Query("Todos"),
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query("")
 ):
+    ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
     vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in rows)
@@ -169,44 +223,52 @@ def get_charts_investors(
         cnt_pf = sum(r["Qtd_Inv_Pessoa_Fisica"] for r in rows)
         cnt_fd = sum(r["Qtd_Inv_Fundos"] for r in rows)
         cnt_est = sum(r["Qtd_Inv_Estrangeiro"] for r in rows)
+        lbls = ["Pessoa Física (Varejo)", "Fundos de Investimento", "Investidor Estrangeiro"]
+        vals = [cnt_pf, cnt_fd, cnt_est]
         return {
             "type": "count",
-            "labels": ["Pessoa Física (Varejo)", "Fundos de Investimento", "Investidor Estrangeiro"],
-            "values": [cnt_pf, cnt_fd, cnt_est]
+            "labels": lbls,
+            "values": vals,
+            "demographics": {"labels": lbls, "values": vals}
         }
         
+    lbls = [
+        "Fundos de Investimento",
+        "Pessoa Física (Varejo)",
+        "Investidor Estrangeiro",
+        "Instituições & Intermediários",
+        "Previdência Privada",
+        "Companhias Seguradoras"
+    ]
+    vals = [
+        round(vol_fd, 2),
+        round(vol_pf, 2),
+        round(vol_est, 2),
+        round(vol_inst, 2),
+        round(vol_prev, 2),
+        round(vol_seg, 2)
+    ]
     return {
         "type": "volume",
-        "labels": [
-            "Fundos de Investimento",
-            "Pessoa Física (Varejo)",
-            "Investidor Estrangeiro",
-            "Instituições & Intermediários",
-            "Previdência Privada",
-            "Companhias Seguradoras"
-        ],
-        "values": [
-            round(vol_fd, 2),
-            round(vol_pf, 2),
-            round(vol_est, 2),
-            round(vol_inst, 2),
-            round(vol_prev, 2),
-            round(vol_seg, 2)
-        ]
+        "labels": lbls,
+        "values": vals,
+        "demographics": {"labels": lbls, "values": vals}
     }
 
 @app.get("/api/rankings")
 def get_rankings(
-    ano: str = Query("Recentes (2023-2026)"),
-    rito: str = Query("Todos"),
-    ativo: str = Query("Todos"),
-    status: str = Query("Todos"),
-    indexador: str = Query("Todos"),
-    publico: str = Query("Todos"),
-    regime: str = Query("Todos"),
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     limit: int = Query(15)
 ):
+    ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca); limit = _val(limit)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
     lider_vol = defaultdict(float)
@@ -242,19 +304,22 @@ def get_rankings(
 
 @app.get("/api/offers")
 def get_offers(
-    ano: str = Query("Recentes (2023-2026)"),
-    rito: str = Query("Todos"),
-    ativo: str = Query("Todos"),
-    status: str = Query("Todos"),
-    indexador: str = Query("Todos"),
-    publico: str = Query("Todos"),
-    regime: str = Query("Todos"),
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     page: int = Query(1),
     page_size: int = Query(50),
     sort_by: str = Query("Data_Clean"),
     sort_order: str = Query("desc")
 ):
+    ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    page = _val(page); page_size = _val(page_size); sort_by = _val(sort_by); sort_order = _val(sort_order)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
     reverse = (sort_order == "desc")
@@ -278,17 +343,66 @@ def get_offers(
         "items": paginated
     }
 
+@app.get("/api/search")
+def get_search(
+    q: str = Query(""),
+    type: str = Query("todos"),
+    limit: int = Query(20),
+    page: int = Query(1)
+):
+    q_val = _val(q)
+    type_val = _val(type)
+    limit_val = _val(limit)
+    page_val = _val(page)
+    q_lower = str(q_val).lower().strip() if q_val else ""
+    if not q_lower:
+        return {"total": 0, "page": page_val, "limit": limit_val, "items": []}
+    
+    results = []
+    for r in engine.rows:
+        t_lower = str(type_val).lower()
+        match = False
+        if t_lower in ("emissor", "todos"):
+            if q_lower in r["Emissor"].lower(): match = True
+        if not match and t_lower in ("coordenador", "lider", "todos"):
+            if q_lower in r["Lider"].lower(): match = True
+        if not match and t_lower == "todos":
+            if q_lower in r["Id_Processo"].lower() or q_lower in r["Ativo"].lower() or q_lower in r["Status"].lower():
+                match = True
+        if match:
+            results.append(r)
+            
+    total = len(results)
+    start = (page_val - 1) * limit_val
+    paginated = results[start:start + limit_val]
+    return {
+        "total": total,
+        "page": page_val,
+        "limit": limit_val,
+        "items": paginated
+    }
+
+@app.get("/api/offers/{id_processo:path}")
+def get_offer_detail(id_processo: str):
+    clean_id = id_processo.strip()
+    for r in engine.rows:
+        if str(r.get("Id_Processo")).strip() == clean_id or str(r.get("Numero_Requerimento")).strip() == clean_id:
+            return r
+    raise HTTPException(status_code=404, detail="Oferta não encontrada no banco de dados CVM.")
+
 @app.get("/api/export")
 def export_offers(
-    ano: str = Query("Recentes (2023-2026)"),
-    rito: str = Query("Todos"),
-    ativo: str = Query("Todos"),
-    status: str = Query("Todos"),
-    indexador: str = Query("Todos"),
-    publico: str = Query("Todos"),
-    regime: str = Query("Todos"),
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query("")
 ):
+    ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
     output = io.StringIO()
@@ -315,8 +429,11 @@ def export_offers(
         headers={"Content-Disposition": "attachment; filename=cvm_ofertas_primarias_export.csv"}
     )
 
+frontend_dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
-if os.path.exists(frontend_dir):
+if os.path.exists(frontend_dist_dir):
+    app.mount("/", StaticFiles(directory=frontend_dist_dir, html=True), name="frontend")
+elif os.path.exists(frontend_dir):
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
 if __name__ == "__main__":

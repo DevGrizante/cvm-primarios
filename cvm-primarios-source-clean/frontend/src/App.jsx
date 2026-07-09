@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef, useCallback } = React;
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const formatCurrency = (val) => {
     if (val === undefined || val === null || isNaN(val)) return "R$ 0,00";
@@ -42,7 +42,7 @@ const ChartWrapper = ({ type, data, options, height = 300 }) => {
             chartInstance.current.destroy();
         }
         const ctx = canvasRef.current.getContext("2d");
-        chartInstance.current = new Chart(ctx, {
+        chartInstance.current = new window.Chart(ctx, {
             type: type,
             data: data,
             options: {
@@ -103,7 +103,6 @@ const DrawerLateralDossie = ({ offer, onClose, onNavigate, totalItems, currentIn
     };
 
     const isTaxaConfirmada = offer.Taxa_Declarada || offer.Taxa_Juros?.includes("*(Hist. Emissor)*") || (offer.Taxa_Juros && !offer.Taxa_Juros.includes("a Definir") && !offer.Taxa_Juros.includes("Não Informado"));
-    const isBookbuilding = offer.Status === "Em Andamento (Bookbuilding)" || offer.Alocacao_Pendente || !offer.Taxa_Declarada;
 
     return (
         <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end transition-opacity duration-300">
@@ -321,7 +320,6 @@ const DrawerLateralDossie = ({ offer, onClose, onNavigate, totalItems, currentIn
 
 // Main App Component
 const App = () => {
-    // URL Search Params Hydration
     const getInitialUrlParams = () => new URLSearchParams(window.location.search);
     
     const [status, setStatus] = useState({ status: "loading", rows_count: 0, last_update: "Conectando..." });
@@ -350,7 +348,6 @@ const App = () => {
     const [sortBy, setSortBy] = useState(getInitialUrlParams().get("sort_by") || "Data_Clean");
     const [sortOrder, setSortOrder] = useState(getInitialUrlParams().get("sort_order") || "desc");
 
-    // Fetch System Status
     useEffect(() => {
         fetch("/api/status")
             .then(r => r.json())
@@ -358,7 +355,6 @@ const App = () => {
             .catch(() => setStatus({ status: "error", rows_count: 0, last_update: "Erro de Conexão CVM" }));
     }, []);
 
-    // Synchronize filters & search with URL Query String via window.history.pushState
     useEffect(() => {
         const params = new URLSearchParams();
         if (searchQuery) params.set("busca", searchQuery);
@@ -377,7 +373,6 @@ const App = () => {
         window.history.pushState({ path: newUrl }, "", newUrl);
     }, [filters, searchQuery, sortBy, sortOrder, currentPage]);
 
-    // Unified Debounced Data Fetch with AbortController
     useEffect(() => {
         const controller = new AbortController();
         const signal = controller.signal;
@@ -420,7 +415,7 @@ const App = () => {
                         setLoading(false);
                     }
                 });
-        }, 350); // 350ms debounce
+        }, 350);
 
         return () => {
             clearTimeout(timer);
@@ -491,7 +486,6 @@ const App = () => {
 
     return (
         <div className="min-h-screen flex flex-col">
-            {/* Top Navigation Bar with Unified Search */}
             <header className="glass-header sticky top-0 z-40 px-6 py-4">
                 <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex items-center space-x-3">
@@ -515,7 +509,6 @@ const App = () => {
                         </div>
                     </div>
 
-                    {/* Unified Debounced Search Bar Header */}
                     <div className="flex items-center space-x-3 flex-1 max-w-md">
                         <div className="relative w-full">
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -538,7 +531,6 @@ const App = () => {
                         </div>
                     </div>
 
-                    {/* Navigation Tabs */}
                     <nav className="flex items-center space-x-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
                         <button
                             onClick={() => setActiveTab("explorer")}
@@ -562,12 +554,9 @@ const App = () => {
                 </div>
             </header>
 
-            {/* Main Content Area */}
             <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-                {/* 4 Dedicated Credit Desk KPIs Row */}
                 {kpis && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {/* KPI 1: Share de Volume por Indexador */}
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-amber-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
@@ -587,7 +576,6 @@ const App = () => {
                             </div>
                         </div>
 
-                        {/* KPI 2: Pipeline em Bookbuilding */}
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-indigo-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
@@ -604,7 +592,6 @@ const App = () => {
                             </div>
                         </div>
 
-                        {/* KPI 3: Ticket Médio / Varejo Real */}
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-emerald-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
@@ -621,7 +608,6 @@ const App = () => {
                             </div>
                         </div>
 
-                        {/* KPI 4: Visão Geral de Juros / Volume Confirmado */}
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-blue-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
@@ -640,7 +626,6 @@ const App = () => {
                     </div>
                 )}
 
-                {/* Filter Bar Component */}
                 <div className="glass-card rounded-2xl p-5 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
                         <div className="flex items-center space-x-2 text-sm font-semibold text-white">
@@ -750,7 +735,6 @@ const App = () => {
                     </div>
                 </div>
 
-                {/* Tab 1: Explorer & Table with Slide-over Drawer */}
                 {activeTab === "explorer" && (
                     <div className="glass-card rounded-2xl overflow-hidden shadow-xl">
                         <div className="p-4 bg-slate-900/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
@@ -868,7 +852,6 @@ const App = () => {
                             </div>
                         )}
 
-                        {/* Pagination Footer */}
                         <div className="p-4 bg-slate-900/60 border-t border-slate-800 flex items-center justify-between">
                             <span className="text-xs font-mono text-slate-400">
                                 Exibindo {(offersData.page - 1) * pageSize + 1} a {Math.min(offersData.page * pageSize, offersData.total)} de {formatNumber(offersData.total)}
@@ -894,10 +877,8 @@ const App = () => {
                     </div>
                 )}
 
-                {/* Tab 2: Charts & Monthly Stacked Bars */}
                 {activeTab === "charts" && overviewCharts && (
                     <div className="space-y-6">
-                        {/* Monthly Stacked Bar Chart */}
                         {overviewCharts.monthly_indexer && (
                             <div className="glass-card rounded-2xl p-6 space-y-4">
                                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -936,7 +917,6 @@ const App = () => {
                             </div>
                         )}
 
-                        {/* Top Ativos & Funil */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="glass-card rounded-2xl p-6 space-y-4">
                                 <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Volume por Tipo de Ativo Mobiliário (R$ Bi)</h3>
@@ -986,7 +966,6 @@ const App = () => {
                     </div>
                 )}
 
-                {/* Tab 3: Investor Demographics */}
                 {activeTab === "investors" && investorCharts && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="glass-card rounded-2xl p-6 space-y-4">
@@ -1036,7 +1015,6 @@ const App = () => {
                 )}
             </main>
 
-            {/* Slide-over Drawer Dossier */}
             <DrawerLateralDossie
                 offer={selectedOffer}
                 onClose={() => setSelectedOffer(null)}
@@ -1045,7 +1023,6 @@ const App = () => {
                 currentIndex={selectedOffer ? offersData.items.findIndex(o => o.Id_Processo === selectedOffer.Id_Processo) : -1}
             />
 
-            {/* Footer */}
             <footer className="glass-header mt-auto py-6 px-6 text-center text-xs text-slate-500 font-mono">
                 <p>CVM Primários Monitor PRO © 2026 • Auditoria em Tempo Real • Conforme Resoluções CVM 160, ICVM 400 e 476</p>
             </footer>
@@ -1053,5 +1030,4 @@ const App = () => {
     );
 };
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+export default App;

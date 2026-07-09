@@ -7,12 +7,7 @@ from collections import defaultdict
 import csv
 import io
 import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from backend.data_engine import engine
-except ModuleNotFoundError:
-    from data_engine import engine
+from data_engine import engine
 
 app = FastAPI(title="CVM Primários Monitor PRO API", version="2.0.0")
 

@@ -1,4 +1,5 @@
 import os
+import re
 import csv
 import zipfile
 import io
@@ -8,9 +9,9 @@ from datetime import datetime
 from collections import defaultdict
 
 ZIP_URL = "https://dados.cvm.gov.br/dados/OFERTA/DISTRIB/DADOS/oferta_distribuicao.zip"
-CACHE_DIR = os.path.join(os.path.dirname(__file__), "data_cache")
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
 ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
-SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "oferta_distribuicao.zip"))
+SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 
 class CVMDataEngine:
     def __init__(self):
@@ -203,14 +204,86 @@ class CVMDataEngine:
                     return f"IPCA + {val}", True
                 return val, True
             
+            st_upper = str(r.get("Status_Requerimento", "")).strip().upper()
+            is_active = any(k in st_upper for k in ("ANDAMENTO", "ANÁLISE INICIAL", "AGUARDANDO BOOKBUILDING", "EM ANÁLISE"))
+            
+            ativo_val = str(r.get("Valor_Mobiliario", "")).upper()
+            if "FIDC" in ativo_val or "CREDIT" in ativo_val:
+                return "Retorno Subordinado / Alvo (Ver Regulamento FIDC)", False
+            elif any(x in ativo_val for x in ("FII", "FIAGRO", "IMOBIL", "AGRONEG")):
+                return "Rentabilidade Alvo (Ver Regulamento)", False
+            elif any(x in ativo_val for x in ("AÇÕES", "ACOES", "BDR")):
+                return "Não Aplicável (Renda Variável / Ações)", False
+            
+            if not is_active and st_upper:
+                if idx_type == "CDI / DI":
+                    return "CDI + Spread (Ver Dossiê / API CVM)", False
+                elif idx_type == "IPCA / Inflação":
+                    return "IPCA + Spread (Ver Dossiê / API CVM)", False
+                elif idx_type == "PRÉ (Prefixado)":
+                    return "Taxa Prefixada (Ver Dossiê / API CVM)", False
+                return "Não Informado no CSV (Ver Dossiê / API CVM)", False
+
             if idx_type == "IPCA / Inflação":
                 inc = str(r.get("Titulo_incentivado", "")).strip().upper() == "S" or "12.431" in text or "12431" in text
-                return "IPCA + Spread a Definir (Lei 12.431)" if inc else "IPCA + Spread a Definir", False
+                return "IPCA + Spread a Definir (Lei 12.431)" if inc else "IPCA + Spread a Definir (Bookbuilding)", False
             elif idx_type == "CDI / DI":
                 return "CDI + Spread a Definir (Bookbuilding)", False
             elif idx_type == "PRÉ (Prefixado)":
                 return "Taxa Prefixada a Definir", False
             return "Não Informado (CVM)", False
+
+    def _extract_vencimento(self, r, is_hist):
+        import re
+        if is_hist:
+            raw = str(r.get("Data_Vencimento", "")).strip()
+            if not raw or raw in ("-", "--", "00/00/0000", "N/A"):
+                return "N/I"
+            if len(raw) >= 10 and raw[4] == "-":
+                parts = raw.split("-")
+                return f"{parts[1]}/{parts[0][-2:]}"
+            elif len(raw) >= 10 and raw[2] == "/":
+                parts = raw.split("/")
+                return f"{parts[1]}/{parts[2][-2:]}"
+            return raw[:7] if len(raw) >= 7 else "N/I"
+        else:
+            text = f"{r.get('Descricao_lastro','')} {r.get('Destinacao_recursos','')} {r.get('Ativos_alvo','')}"
+            m = re.search(r'\b(?:vencimento|vence|venc\.?)\s+(?:em|dia|até)?\s*(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2}|\d{2}/\d{4})\b', text, re.I)
+            if m:
+                raw = m.group(1)
+                if len(raw) == 10 and raw[4] == "-":
+                    p = raw.split("-")
+                    return f"{p[1]}/{p[0][-2:]}"
+                elif len(raw) == 10 and raw[2] == "/":
+                    p = raw.split("/")
+                    return f"{p[1]}/{p[2][-2:]}"
+                elif len(raw) == 7 and raw[2] == "/":
+                    return f"{raw[:2]}/{raw[-2:]}"
+            m2 = re.search(r'\b(?:vencimento\s+em\s+)(\d{4})\b', text, re.I)
+            if m2:
+                return f"Anual/{m2.group(1)[-2:]}"
+            return "N/I"
+
+    def _extract_ntnb_reference(self, r):
+        import re
+        texts = [
+            str(r.get("Taxa_Juros", "")),
+            str(r.get("Descricao_Lastro", "")),
+            str(r.get("Destinacao_Recursos", "")),
+            str(r.get("Ativos_Alvo", "")),
+            str(r.get("Descricao_lastro", "")),
+            str(r.get("Destinacao_recursos", "")),
+            str(r.get("Ativos_alvo", ""))
+        ]
+        full_text = " ".join(texts).upper()
+        
+        m = re.search(r'\b(?:NTN-?B|TESOURO\s+IPCA\+?|TN-?B)\s*(?:COM\s+VENCIMENTO\s+EM\s+|APURADA.*?|DE\s+|PARA\s+)?(\d{4})\b', full_text)
+        if m:
+            return f"NTN-B {m.group(1)}"
+        m2 = re.search(r'\b(?:NTN-?B|NTN\s+B)\s*.*?(\d{4})\b', full_text)
+        if m2:
+            return f"NTN-B {m2.group(1)}"
+        return "Outras / Não Espec."
 
     def load_from_zip(self, zip_filepath):
         print(f"Loading CSV files from {zip_filepath}...")
@@ -228,6 +301,7 @@ class CVMDataEngine:
                     
                     idx_type, idx_inferido = self._infer_indexador(r, is_hist=False)
                     taxa_juros, taxa_declarada = self._extract_taxa_juros(r, idx_type, is_hist=False)
+                    venc_clean = self._extract_vencimento(r, is_hist=False)
                     
                     vol_float = self._parse_float(r.get("Valor_Total_Registrado"))
                     qtde_float = self._parse_float(r.get("Qtde_Total_Registrada"))
@@ -241,7 +315,7 @@ class CVMDataEngine:
                         self._parse_float(r.get("Qtde_VM_Instit_Intermed_Partic_Consorcio_Distrib")) + self._parse_float(r.get("Qtde_VM_Demais_Instit_Financ"))
                     )
                     
-                    unified.append({
+                    row_dict = {
                         "Id_Processo": r.get("Numero_Processo") or r.get("Numero_Requerimento") or "N/A",
                         "Numero_Requerimento": r.get("Numero_Requerimento", "N/A"),
                         "Regime": "Resolução 160 (Moderno)",
@@ -254,6 +328,7 @@ class CVMDataEngine:
                         "Indexador_Inferido": idx_inferido,
                         "Taxa_Juros": taxa_juros,
                         "Taxa_Declarada": taxa_declarada,
+                        "Vencimento": venc_clean,
                         "Tipo_Oferta_Clean": self._clean_text(r.get("Tipo_Oferta")),
                         "Emissor": self._clean_text(r.get("Nome_Emissor")),
                         "CNPJ_Emissor": r.get("CNPJ_Emissor", "Não Informado"),
@@ -264,24 +339,18 @@ class CVMDataEngine:
                         "ESG": "Sim" if str(r.get("Titulo_classificado_como_sustentavel")).strip().upper() == "S" else "Não",
                         "Volume_Float": vol_float,
                         "Qtde_Float": qtde_float,
-                        
-                        # Alocação Volume R$ Real (corrigido unidade)
                         "Vol_Pessoa_Fisica": vol_pf,
                         "Vol_Fundos": vol_fd,
                         "Vol_Estrangeiro": vol_est,
                         "Vol_Previdencia": vol_prev,
                         "Vol_Seguradoras": vol_seg,
                         "Vol_Instituicoes": vol_inst,
-                        
-                        # Alocação Quantidade Investidores
                         "Qtd_Inv_Pessoa_Fisica": self._parse_int(r.get("Num_Invest_Pessoa_Natural")),
                         "Qtd_Inv_Fundos": self._parse_int(r.get("Num_Invest_Fundos_Investimento")),
                         "Qtd_Inv_Estrangeiro": self._parse_int(r.get("Num_Invest_Investidor_Estrangeiro")),
                         "Qtd_Inv_Previdencia": self._parse_int(r.get("Num_Invest_Entidade_Previdencia_Privada")),
                         "Qtd_Inv_Seguradoras": self._parse_int(r.get("Num_Invest_Companhia_Seguradora")),
                         "Qtd_Inv_Instituicoes": self._parse_int(r.get("Num_Invest_Instit_Intermed_Partic_Consorcio_Distrib")) + self._parse_int(r.get("Num_Invest_Demais_Instit_Financ")),
-                        
-                        # Extra deep governance details for detailed tab
                         "Processo_SEI": r.get("Processo_SEI", "Não informado"),
                         "Administrador": self._clean_text(r.get("Administrador")),
                         "Gestor": self._clean_text(r.get("Gestor")),
@@ -300,7 +369,9 @@ class CVMDataEngine:
                         "Possibilidade_Revolvencia": "Sim" if str(r.get("Possibilidade_revolvencia", "")).strip().upper() == "S" else "Não",
                         "Titulo_Incentivado": "Sim" if str(r.get("Titulo_incentivado", "")).strip().upper() == "S" else "Não",
                         "Coobrigados": self._clean_text(r.get("Identificacao_devedores_coobrigados"))
-                    })
+                    }
+                    row_dict["Referencia_NTNB"] = self._extract_ntnb_reference(row_dict)
+                    unified.append(row_dict)
 
             # 2. Instrução 400/476 (Historical up to 2023)
             with z.open("oferta_distribuicao.csv") as f:
@@ -314,6 +385,7 @@ class CVMDataEngine:
                     
                     idx_type, idx_inferido = self._infer_indexador(r, is_hist=True)
                     taxa_juros, taxa_declarada = self._extract_taxa_juros(r, idx_type, is_hist=True)
+                    venc_clean = self._extract_vencimento(r, is_hist=True)
                     
                     vol_float = self._parse_float(r.get("Valor_Total"))
                     qtde_float = self._parse_float(r.get("Quantidade_Total"))
@@ -327,7 +399,7 @@ class CVMDataEngine:
                         self._parse_float(r.get("Qtd_Cli_Pessoa_Juridica"))
                     )
                     
-                    unified.append({
+                    row_dict = {
                         "Id_Processo": r.get("Numero_Processo") or "N/A",
                         "Numero_Requerimento": r.get("Numero_Registro_Oferta", "N/A"),
                         "Regime": "ICVM 400/476 (Histórico)",
@@ -340,6 +412,7 @@ class CVMDataEngine:
                         "Indexador_Inferido": idx_inferido,
                         "Taxa_Juros": taxa_juros,
                         "Taxa_Declarada": taxa_declarada,
+                        "Vencimento": venc_clean,
                         "Tipo_Oferta_Clean": self._clean_text(r.get("Tipo_Oferta")),
                         "Emissor": self._clean_text(r.get("Nome_Emissor")),
                         "CNPJ_Emissor": r.get("CNPJ_Emissor", "Não Informado"),
@@ -350,21 +423,18 @@ class CVMDataEngine:
                         "ESG": "Não Informado",
                         "Volume_Float": vol_float,
                         "Qtde_Float": qtde_float,
-                        
                         "Vol_Pessoa_Fisica": vol_pf,
                         "Vol_Fundos": vol_fd,
                         "Vol_Estrangeiro": vol_est,
                         "Vol_Previdencia": vol_prev,
                         "Vol_Seguradoras": vol_seg,
                         "Vol_Instituicoes": vol_inst,
-                        
                         "Qtd_Inv_Pessoa_Fisica": self._parse_int(r.get("Nr_Pessoa_Fisica")),
                         "Qtd_Inv_Fundos": self._parse_int(r.get("Nr_Fundos_Investimento")),
                         "Qtd_Inv_Estrangeiro": self._parse_int(r.get("Nr_Investidor_Estrangeiro")),
                         "Qtd_Inv_Previdencia": self._parse_int(r.get("Nr_Entidade_Previdencia_Privada")),
                         "Qtd_Inv_Seguradoras": self._parse_int(r.get("Nr_Companhia_Seguradora")),
                         "Qtd_Inv_Instituicoes": self._parse_int(r.get("Nr_Demais_Pessoa_Juridica")),
-                        
                         "Processo_SEI": "N/A",
                         "Administrador": "Não informado",
                         "Gestor": "Não informado",
@@ -383,13 +453,14 @@ class CVMDataEngine:
                         "Possibilidade_Revolvencia": "Não Informado",
                         "Titulo_Incentivado": "Sim" if str(r.get("Oferta_Incentivo_Fiscal", "")).strip().upper() == "S" else "Não",
                         "Coobrigados": "Não informado"
-                    })
+                    }
+                    row_dict["Referencia_NTNB"] = self._extract_ntnb_reference(row_dict)
+                    unified.append(row_dict)
 
-        # Build issuer historical average volume & rate cache
+        # Build issuer historical average volume cache
         import hashlib
         issuer_vols = {}
         issuer_qtys = {}
-        issuer_rates = {}
         for r in unified:
             em = r["Emissor"]
             at_key = r["Ativo"]
@@ -399,12 +470,6 @@ class CVMDataEngine:
             if r["Qtde_Float"] > 0:
                 issuer_qtys.setdefault((em, at_key), []).append(r["Qtde_Float"])
                 issuer_qtys.setdefault(em, []).append(r["Qtde_Float"])
-            if r.get("Taxa_Declarada") and r["Taxa_Juros"] and not any(w in r["Taxa_Juros"] for w in ("Spread", "Flutuante", "Não Informado", "Taxa Prefixada", "a Definir")):
-                issuer_rates.setdefault((em, r["Indexador"]), r["Taxa_Juros"])
-                cnpj_clean = r.get("CNPJ_Emissor", "").strip()
-                is_spv = any(x in em.upper() for x in ("SECURITIZADORA", "TRUST", "DISTRIBUIDORA", "FIDC", "FINANCEIRA"))
-                if cnpj_clean and cnpj_clean != "Não Informado" and not is_spv:
-                    issuer_rates.setdefault((cnpj_clean, r["Indexador"]), r["Taxa_Juros"])
 
         # Pass 2: Identificar ofertas com volume em bookbuilding e aplicar honestidade em taxas/alocações
         for r in unified:
@@ -452,27 +517,27 @@ class CVMDataEngine:
                     r["Qtd_Inv_Seguradoras"] = 0
                     r["Qtd_Inv_Instituicoes"] = 0
 
-            # 2. Honestidade de Taxas: se a taxa não foi informada ou está a definir, usar histórico do emissor ou explicitar "a Definir"
+            # 2. Honestidade de Taxas e Status: se não estiver explicitamente informada, verificar status real (nunca marcar encerradas como Bookbuilding nem usar histórico do emissor)
             if not r.get("Taxa_Declarada") or any(w in r["Taxa_Juros"] for w in ("Spread", "Flutuante", "Não Informado", "a Definir")):
-                cnpj = r.get("CNPJ_Emissor", "").strip()
-                is_spv = any(x in em.upper() for x in ("SECURITIZADORA", "TRUST", "DISTRIBUIDORA", "FIDC", "FINANCEIRA"))
-                found_rate = None
-                if (em, idx) in issuer_rates:
-                    found_rate = issuer_rates[(em, idx)]
-                elif cnpj and cnpj != "Não Informado" and not is_spv and (cnpj, idx) in issuer_rates:
-                    found_rate = issuer_rates[(cnpj, idx)]
-                elif (em, "CDI / DI") in issuer_rates and idx == "CDI / DI":
-                    found_rate = issuer_rates[(em, "CDI / DI")]
-                elif cnpj and cnpj != "Não Informado" and not is_spv and (cnpj, "CDI / DI") in issuer_rates and idx == "CDI / DI":
-                    found_rate = issuer_rates[(cnpj, "CDI / DI")]
-                elif (em, "IPCA / Inflação") in issuer_rates and idx == "IPCA / Inflação":
-                    found_rate = issuer_rates[(em, "IPCA / Inflação")]
-                elif cnpj and cnpj != "Não Informado" and not is_spv and (cnpj, "IPCA / Inflação") in issuer_rates and idx == "IPCA / Inflação":
-                    found_rate = issuer_rates[(cnpj, "IPCA / Inflação")]
-
-                if found_rate and ((idx == "CDI / DI" and any(k in found_rate.upper() for k in ("CDI", "DI", "%"))) or (idx == "IPCA / Inflação" and any(k in found_rate.upper() for k in ("IPCA", "%")))):
-                    r["Taxa_Juros"] = f"{found_rate} *(Hist. Emissor)*"
-                    r["Taxa_Declarada"] = True
+                st_upper = str(r.get("Status", "")).strip().upper()
+                is_active = any(k in st_upper for k in ("ANDAMENTO", "ANÁLISE INICIAL", "AGUARDANDO BOOKBUILDING", "EM ANÁLISE"))
+                at_upper = str(r.get("Ativo", "")).upper()
+                
+                if "FIDC" in at_upper or "CREDIT" in at_upper:
+                    r["Taxa_Juros"] = "Retorno Subordinado / Alvo (Ver Regulamento FIDC)"
+                elif any(x in at_upper for x in ("FII", "FIAGRO", "IMOBIL", "AGRONEG")):
+                    r["Taxa_Juros"] = "Rentabilidade Alvo (Ver Regulamento)"
+                elif any(x in at_upper for x in ("AÇÕES", "ACOES", "BDR")):
+                    r["Taxa_Juros"] = "Não Aplicável (Renda Variável / Ações)"
+                elif not is_active:
+                    if idx == "CDI / DI":
+                        r["Taxa_Juros"] = "CDI + Spread (Ver Dossiê / API CVM)"
+                    elif idx == "IPCA / Inflação":
+                        r["Taxa_Juros"] = "IPCA + Spread (Ver Dossiê / API CVM)"
+                    elif idx == "PRÉ (Prefixado)":
+                        r["Taxa_Juros"] = "Taxa Prefixada (Ver Dossiê / API CVM)"
+                    else:
+                        r["Taxa_Juros"] = "Não Informado no CSV (Ver Dossiê / API CVM)"
                 else:
                     if idx == "CDI / DI":
                         r["Taxa_Juros"] = "CDI + Spread a Definir (Bookbuilding)"
@@ -482,6 +547,18 @@ class CVMDataEngine:
                         r["Taxa_Juros"] = "Taxa Prefixada a Definir"
                     else:
                         r["Taxa_Juros"] = "Não Informado (CVM)"
+            
+            if r.get("Taxa_Declarada") and r.get("Taxa_Juros"):
+                t_upper = str(r["Taxa_Juros"]).upper()
+                if any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %")):
+                    r["Indexador"] = "CDI / DI"
+                    r["Indexador_Inferido"] = False
+                elif any(k in t_upper for k in ("IPCA", "INPC", "IGP-M", "IGPM", "TR ")):
+                    r["Indexador"] = "IPCA / Inflação"
+                    r["Indexador_Inferido"] = False
+                elif any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX")) or re.match(r'^\d+[\d,.]*\s*%', str(r["Taxa_Juros"])):
+                    r["Indexador"] = "PRÉ (Prefixado)"
+                    r["Indexador_Inferido"] = False
 
         # Sort descending by Data_Clean
         unified.sort(key=lambda x: x["Data_Clean"], reverse=True)
@@ -514,13 +591,20 @@ class CVMDataEngine:
     def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", busca=""):
         def _to_list(val):
             if isinstance(val, (list, tuple, set)):
+                if not val:
+                    return ["Todos"]
                 items = []
                 for v in val:
                     items.extend([i.strip() for i in str(v).split(",") if i.strip()])
-                return items if items else ["Todos"]
-            if not val: return ["Todos"]
+                if not items or any(i == "Todos" or i.startswith("Todos os") for i in items):
+                    return ["Todos"]
+                return items
+            if not val:
+                return ["Todos"]
             items = [i.strip() for i in str(val).split(",") if i.strip()]
-            return items if items else ["Todos"]
+            if not items or any(i == "Todos" or i.startswith("Todos os") for i in items):
+                return ["Todos"]
+            return items
 
         ano_list = _to_list(ano)
         rito_list = _to_list(rito)

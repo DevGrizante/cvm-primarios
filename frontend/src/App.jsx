@@ -1,5 +1,38 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import Chart from 'chart.js/auto';
+import {
+    Chart,
+    CategoryScale,
+    LinearScale,
+    BarElement,
+    BarController,
+    LineElement,
+    LineController,
+    PointElement,
+    ArcElement,
+    PieController,
+    DoughnutController,
+    Title,
+    Tooltip,
+    Legend,
+    Filler
+} from 'chart.js';
+
+Chart.register(
+    CategoryScale,
+    LinearScale,
+    BarElement,
+    BarController,
+    LineElement,
+    LineController,
+    PointElement,
+    ArcElement,
+    PieController,
+    DoughnutController,
+    Title,
+    Tooltip,
+    Legend,
+    Filler
+);
 
 const formatCurrency = (val) => {
     if (val === undefined || val === null || isNaN(val)) return "R$ 0,00";
@@ -938,8 +971,8 @@ const App = () => {
                         <div className="p-4 bg-slate-900/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                             <div className="flex items-center space-x-3">
                                 <h2 className="text-base font-bold text-white font-display">Tabela de Ofertas Primárias e Remuneração</h2>
-                                <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2.5 py-0.5 rounded-full border border-slate-700">
-                                    Página {offersData.page} de {offersData.total_pages} ({formatNumber(offersData.total)} ofertas)
+                                <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2.5 py-0.5 rounded-full border border-slate-700" title={filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "Total aproximado para indexador filtrado em tempo real" : ""}>
+                                    Página {offersData.page} de {offersData.total_pages} ({formatNumber(offersData.total)} ofertas{filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "*" : ""})
                                 </span>
                             </div>
 
@@ -1054,9 +1087,14 @@ const App = () => {
 
                         {/* Pagination Footer */}
                         <div className="p-4 bg-slate-900/60 border-t border-slate-800 flex items-center justify-between">
-                            <span className="text-xs font-mono text-slate-400">
-                                Exibindo {(offersData.page - 1) * pageSize + 1} a {Math.min(offersData.page * pageSize, offersData.total)} de {formatNumber(offersData.total)}
-                            </span>
+                            <div className="flex flex-col">
+                                <span className="text-xs font-mono text-slate-400">
+                                    Exibindo {(offersData.page - 1) * pageSize + 1} a {Math.min(offersData.page * pageSize, offersData.total)} de {formatNumber(offersData.total)}{filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "*" : ""}
+                                </span>
+                                {filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" && (
+                                    <span className="text-[10px] font-mono text-amber-400/80">* Total aproximado com filtro de indexador</span>
+                                )}
+                            </div>
                             <div className="flex items-center space-x-2">
                                 <button
                                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -1100,18 +1138,38 @@ const App = () => {
                                         <p className="text-xs text-slate-400">Correlação entre o ano de vencimento dos títulos e o spread médio indicativo (CDI+ e IPCA+)</p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">
-                                        <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI+ (% a.a.)</span></span>
-                                        <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-3 h-3 rounded bg-amber-500 inline-block"></span><span>IPCA+ (% a.a.)</span></span>
+                                        <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500 border border-indigo-300 inline-block"></span><span>CDI+ (% a.a.)</span></span>
+                                        <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-2.5 h-2.5 rounded-full bg-amber-500 border border-amber-300 inline-block"></span><span>IPCA+ (% a.a.)</span></span>
                                     </div>
                                 </div>
                                 <ChartWrapper
-                                    type="bar"
+                                    type="line"
                                     height={320}
                                     data={{
                                         labels: overviewCharts.vencimento_spread.labels,
                                         datasets: [
-                                            { label: "CDI+ Spread (% a.a.)", data: overviewCharts.vencimento_spread.cdi_spread, backgroundColor: "#6366F1", borderRadius: 4 },
-                                            { label: "IPCA+ Spread (% a.a.)", data: overviewCharts.vencimento_spread.ipca_spread, backgroundColor: "#F59E0B", borderRadius: 4 }
+                                            { 
+                                                label: "CDI+ Spread (% a.a.)", 
+                                                data: overviewCharts.vencimento_spread.cdi_spread, 
+                                                showLine: false,
+                                                pointRadius: 7,
+                                                pointHoverRadius: 10,
+                                                pointBackgroundColor: "#6366F1",
+                                                pointBorderColor: "#C7D2FE",
+                                                pointBorderWidth: 2,
+                                                pointStyle: 'circle'
+                                            },
+                                            { 
+                                                label: "IPCA+ Spread (% a.a.)", 
+                                                data: overviewCharts.vencimento_spread.ipca_spread, 
+                                                showLine: false,
+                                                pointRadius: 7,
+                                                pointHoverRadius: 10,
+                                                pointBackgroundColor: "#F59E0B",
+                                                pointBorderColor: "#FDE68A",
+                                                pointBorderWidth: 2,
+                                                pointStyle: 'circle'
+                                            }
                                         ]
                                     }}
                                     options={{

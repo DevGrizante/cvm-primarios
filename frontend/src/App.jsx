@@ -155,6 +155,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         <span className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
                             <Icons.FileText />
                         </span>
+                        <div>
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-mono text-slate-400 uppercase tracking-wider block">Dossiê de Auditoria Executiva</span>
                                 {loadingApi && (
@@ -167,23 +168,23 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         </div>
                     </div>
                     
-                    {/* Navigation Buttons ↑ / ↓ & Esc */}
+                    {/* Navigation Buttons Cima / Baixo & Esc */}
                     <div className="flex items-center space-x-2">
                         <button 
                             onClick={() => onNavigate("prev")} 
                             disabled={currentIndex <= 0}
-                            title="Oferta Anterior (Setinha ↑)"
+                            title="Oferta Anterior (Cima)"
                             className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded text-slate-300 flex items-center space-x-1 text-xs font-mono border border-slate-700">
                             <Icons.ChevronUp />
-                            <span>↑</span>
+                            <span>&uarr;</span>
                         </button>
                         <button 
                             onClick={() => onNavigate("next")} 
                             disabled={currentIndex >= totalItems - 1}
-                            title="Próxima Oferta (Setinha ↓)"
+                            title="Próxima Oferta (Baixo)"
                             className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded text-slate-300 flex items-center space-x-1 text-xs font-mono border border-slate-700">
                             <Icons.ChevronDown />
-                            <span>↓</span>
+                            <span>&darr;</span>
                         </button>
                         <div className="h-6 w-[1px] bg-slate-800 mx-1"></div>
                         <button 
@@ -378,7 +379,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
 
                 {/* Drawer Footer */}
                 <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
-                    <span>Navegue com setas <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">↑</kbd> <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">↓</kbd> ou feche com <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">Esc</kbd></span>
+                    <span>Navegue com setas <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">&uarr;</kbd> <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">&darr;</kbd> ou feche com <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">Esc</kbd></span>
                     <button 
                         onClick={onClose} 
                         className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-indigo-600/20">
@@ -964,16 +965,16 @@ const App = () => {
                                     <thead>
                                         <tr className="border-b border-slate-800 text-slate-400 font-mono uppercase text-[11px] select-none">
                                             <th className="p-3.5 cursor-pointer hover:text-white" onClick={() => handleSort("Data_Clean")}>
-                                                Data {sortBy === "Data_Clean" && (sortOrder === "asc" ? "↑" : "↓")}
+                                                Data {sortBy === "Data_Clean" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="p-3.5 cursor-pointer hover:text-white" onClick={() => handleSort("Emissor")}>
-                                                Emissor / Ofertante {sortBy === "Emissor" && (sortOrder === "asc" ? "↑" : "↓")}
+                                                Emissor / Ofertante {sortBy === "Emissor" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="p-3.5">Ativo / Tipo</th>
                                             <th className="p-3.5">Indexador</th>
                                             <th className="p-3.5">Remuneração (Spread/Juros)</th>
                                             <th className="p-3.5 text-right cursor-pointer hover:text-white" onClick={() => handleSort("Volume_Float")}>
-                                                Volume Registrado {sortBy === "Volume_Float" && (sortOrder === "asc" ? "↑" : "↓")}
+                                                Volume Registrado {sortBy === "Volume_Float" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="p-3.5 text-center">Vencimento (MM/AA)</th>
                                             <th className="p-3.5 text-center">Auditoria</th>
@@ -1030,7 +1031,7 @@ const App = () => {
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); setSelectedOffer(r); }}
                                                             className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded border border-indigo-500/30 transition-all text-xs font-mono">
-                                                            Dossiê →
+                                                            Dossiê &rarr;
                                                         </button>
                                                     </td>
                                                 </tr>
@@ -1061,7 +1062,7 @@ const App = () => {
                                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                     disabled={currentPage <= 1 || loading}
                                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded text-xs font-mono border border-slate-700">
-                                    ← Anterior
+                                    &larr; Anterior
                                 </button>
                                 <span className="px-3 py-1 bg-slate-950 rounded text-xs font-mono text-indigo-400 border border-slate-800">
                                     {currentPage} / {offersData.total_pages}
@@ -1070,7 +1071,7 @@ const App = () => {
                                     onClick={() => setCurrentPage(p => Math.min(offersData.total_pages, p + 1))}
                                     disabled={currentPage >= offersData.total_pages || loading}
                                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded text-xs font-mono border border-slate-700">
-                                    Próxima →
+                                    Próxima &rarr;
                                 </button>
                             </div>
                         </div>

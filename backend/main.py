@@ -276,12 +276,13 @@ def get_charts_overview(
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
     
-    # If specific indexador is filtered, enrich top candidate offers concurrently so NTN-B references and real spreads/maturities are precise
+    # Enrich top candidate offers concurrently so NTN-B references and real spreads/maturities are precise across all views
+    candidates_charts = [x for x in rows[:25] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))]
+    if candidates_charts:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), candidates_charts))
+            
     if indexador != "Todos":
-        candidates_charts = [x for x in rows[:10] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))]
-        if candidates_charts:
-            with ThreadPoolExecutor(max_workers=6) as pool:
-                list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), candidates_charts))
         rows = [x for x in rows if _match_idx(x["Indexador"], indexador)]
         
     temp_map = defaultdict(lambda: {"Automático": 0.0, "Ordinário": 0.0, "Total": 0.0})
@@ -411,7 +412,7 @@ def get_charts_overview(
             
             # Extract numeric rate/spread
             val_float = None
-            m = re.search(r'[\+\s](\d+[\d,.]*)\s*%', t) or re.search(r'^(\d+[\d,.]*)\s*%', t)
+            m = re.search(r'[\+\s\(](\d+[\d,.]*)\s*%', t) or re.search(r'(\d+[\d,.]*)\s*%', t) or re.search(r'(\d+[\d,.]*)\s*(?:aa|a\.a\.)', t, re.I)
             if m:
                 try:
                     val_float = float(m.group(1).replace(",", "."))
@@ -433,11 +434,38 @@ def get_charts_overview(
                 elif idx_lbl == "IPCA / Inflação":
                     venc_map_ipca[v_year].append(val_float)
                     
+    # If filtered rows yielded fewer than 4 distinct maturity years (e.g. because recent filings initially state Bookbuilding), merge historical spreads to show a complete curve
+    if len(set(list(venc_map_cdi.keys()) + list(venc_map_ipca.keys()))) < 4:
+        for hr in engine.rows:
+            if indexador != "Todos" and not _match_idx(hr.get("Indexador", ""), indexador):
+                continue
+            hv = str(hr.get("Vencimento", "")).strip()
+            ht = str(hr.get("Taxa_Juros", "")).strip()
+            if hv and hv != "N/I" and ht and "DEFINIR" not in ht.upper() and "DOSSIÊ" not in ht.upper():
+                h_year = ""
+                if len(hv) >= 5 and "/" in hv:
+                    h_year = "20" + hv.split("/")[-1][-2:] if hv.split("/")[-1].isdigit() else ""
+                elif len(hv) == 4 and hv.isdigit():
+                    h_year = hv
+                if h_year and h_year.isdigit() and 2024 <= int(h_year) <= 2060:
+                    hm = re.search(r'[\+\s\(](\d+[\d,.]*)\s*%', ht) or re.search(r'(\d+[\d,.]*)\s*%', ht) or re.search(r'(\d+[\d,.]*)\s*(?:aa|a\.a\.)', ht, re.I)
+                    if hm:
+                        try:
+                            hval = float(hm.group(1).replace(",", "."))
+                            if 0.01 <= hval <= 30.0:
+                                h_idx = hr.get("Indexador", "")
+                                if h_idx == "CDI / DI":
+                                    venc_map_cdi[h_year].append(hval)
+                                elif h_idx == "IPCA / Inflação":
+                                    venc_map_ipca[h_year].append(hval)
+                        except Exception:
+                            pass
+
     sorted_v_years = sorted(list(set(list(venc_map_cdi.keys()) + list(venc_map_ipca.keys()))))[:12]
     vencimento_spread = {
         "labels": sorted_v_years,
-        "cdi_spread": [round(sum(venc_map_cdi[y])/len(venc_map_cdi[y]), 2) if venc_map_cdi[y] else 0.0 for y in sorted_v_years],
-        "ipca_spread": [round(sum(venc_map_ipca[y])/len(venc_map_ipca[y]), 2) if venc_map_ipca[y] else 0.0 for y in sorted_v_years],
+        "cdi_spread": [round(sum(venc_map_cdi[y])/len(venc_map_cdi[y]), 2) if venc_map_cdi[y] else None for y in sorted_v_years],
+        "ipca_spread": [round(sum(venc_map_ipca[y])/len(venc_map_ipca[y]), 2) if venc_map_ipca[y] else None for y in sorted_v_years],
         "points": venc_points[:150]
     }
     

@@ -1,4 +1,5 @@
-const { useState, useEffect, useRef, useCallback } = React;
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import Chart from 'chart.js/auto';
 
 const formatCurrency = (val) => {
     if (val === undefined || val === null || isNaN(val)) return "R$ 0,00";
@@ -10,6 +11,15 @@ const formatCurrency = (val) => {
 const formatNumber = (val) => {
     if (val === undefined || val === null || isNaN(val)) return "0";
     return val.toLocaleString("pt-BR");
+};
+
+const formatDate = (dateStr) => {
+    if (!dateStr || typeof dateStr !== "string") return "-";
+    const parts = dateStr.split("T")[0].split("-");
+    if (parts.length === 3 && parts[0].length === 4) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
 };
 
 const getApiBase = () => {
@@ -145,12 +155,11 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         <span className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
                             <Icons.FileText />
                         </span>
-                        <div>
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-mono text-slate-400 uppercase tracking-wider block">Dossiê de Auditoria Executiva</span>
                                 {loadingApi && (
-                                    <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse">
-                                        ⚡ Consultando API CVM...
+                                    <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse flex items-center">
+                                        <Icons.RefreshCw className="w-3 h-3 animate-spin mr-1.5" /> Consultando API CVM...
                                     </span>
                                 )}
                             </div>
@@ -224,12 +233,12 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 <span className="text-sm font-semibold text-slate-200 mt-0.5 flex items-center">
                                     {offer.Indexador || "Não Informado"}
                                     {!offer.Indexador_Inferido || offer.Taxa_Declarada ? (
-                                        <span className="ml-2 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                                            ✓ Oficial CVM / SRE
+                                        <span className="ml-2 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 inline-flex items-center">
+                                            <Icons.Shield className="w-3 h-3 mr-1 inline" /> Oficial CVM / SRE
                                         </span>
                                     ) : (
                                         <span className="ml-2 text-[11px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                                            ⚡ Estimado
+                                            ESTIMADO
                                         </span>
                                     )}
                                 </span>
@@ -240,8 +249,8 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                     {isTaxaConfirmada ? (
                                         <span className="text-emerald-400">{offer.Taxa_Juros}</span>
                                     ) : (
-                                        <span className="text-amber-400 font-mono text-xs bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20 block">
-                                            ⚡ {offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}
+                                        <span className="text-amber-400 font-mono text-xs bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20 block inline-flex items-center">
+                                            <Icons.Clock className="w-3.5 h-3.5 mr-1.5 inline" /> {offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}
                                         </span>
                                     )}
                                 </span>
@@ -253,7 +262,8 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                     {offer.Caracteristicas_CVM && offer.Caracteristicas_CVM.length > 0 && (
                         <div className="space-y-3">
                             <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                                <span>📜 Características do Valor Mobiliário</span>
+                                <Icons.FileText className="w-4 h-4 text-indigo-400" />
+                                <span>Características do Valor Mobiliário</span>
                                 <span className="text-[10px] font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">API REST SRE</span>
                             </h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 bg-slate-900/40 p-3 rounded-lg border border-slate-800/60 max-h-60 overflow-y-auto">
@@ -272,12 +282,12 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         <div className="flex items-center justify-between">
                             <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Alocação por Demografia (R$ Real e Share)</h4>
                             {offer.Alocacao_Pendente ? (
-                                <span className="text-xs text-amber-400 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                                    ⚡ Alocação Pendente (Bookbuilding)
+                                <span className="text-xs text-amber-400 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 inline-flex items-center">
+                                    <Icons.Clock className="w-3.5 h-3.5 mr-1 inline" /> Alocação Pendente (Bookbuilding)
                                 </span>
                             ) : (
-                                <span className="text-xs text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                                    ✓ 100% Confirmada CVM
+                                <span className="text-xs text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 inline-flex items-center">
+                                    <Icons.CheckCircle className="w-3.5 h-3.5 mr-1 inline" /> 100% Confirmada CVM
                                 </span>
                             )}
                         </div>
@@ -345,7 +355,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         </div>
                         <div>
                             <span className="text-slate-500 block">Data de Registro / Entrada</span>
-                            <span className="font-mono text-slate-300 mt-0.5 block">{offer.Data_Clean}</span>
+                            <span className="font-mono text-slate-300 mt-0.5 block">{formatDate(offer.Data_Clean)}</span>
                         </div>
                         <div>
                             <span className="text-slate-500 block">Coordenador Líder</span>
@@ -681,7 +691,7 @@ const App = () => {
                                             : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
                                     }`}>
                                     <span>{label}</span>
-                                    {isSelected && !isAll && <span className="text-indigo-400 font-bold ml-1">✓</span>}
+                                    {isSelected && !isAll && <span className="text-indigo-400 font-bold ml-1">•</span>}
                                 </button>
                             );
                         })}
@@ -707,7 +717,7 @@ const App = () => {
                                             : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
                                     }`}>
                                     <span>{label}</span>
-                                    {isSelected && !isAll && <span className="font-bold ml-1">✓</span>}
+                                    {isSelected && !isAll && <span className="font-bold ml-1">•</span>}
                                 </button>
                             );
                         })}
@@ -723,7 +733,7 @@ const App = () => {
                                     ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
                                     : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200"
                             }`}>
-                            <span>⚖️ Estimados:</span>
+                            <span>Estimados:</span>
                             <strong className={filters.incluir_estimados ? "text-purple-300 font-bold" : "text-slate-500"}>
                                 {filters.incluir_estimados ? "INCLUÍDOS" : "EXCLUÍDOS"}
                             </strong>
@@ -977,7 +987,7 @@ const App = () => {
                                                     key={r.Id_Processo + i} 
                                                     onClick={() => setSelectedOffer(r)}
                                                     className={`cursor-pointer transition-colors ${isSelected ? "bg-indigo-600/15 border-l-4 border-l-indigo-500" : "hover:bg-slate-800/40"}`}>
-                                                    <td className="p-3.5 font-mono text-slate-400 whitespace-nowrap">{r.Data_Clean}</td>
+                                                    <td className="p-3.5 font-mono text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
                                                     <td className="p-3.5 font-semibold text-white max-w-[240px] truncate" title={r.Emissor}>
                                                         {r.Emissor}
                                                         <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate">{r.Lider}</span>
@@ -996,8 +1006,8 @@ const App = () => {
                                                         {(r.Taxa_Declarada || r.Taxa_Juros?.includes("*(Hist. Emissor)*") || (r.Taxa_Juros && !r.Taxa_Juros.includes("a Definir") && !r.Taxa_Juros.includes("Não Informado"))) ? (
                                                             <span className="text-emerald-400 font-semibold truncate block" title={r.Taxa_Juros}>{r.Taxa_Juros}</span>
                                                         ) : (
-                                                            <span className="text-amber-400 text-[11px] font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 block truncate" title={r.Taxa_Juros || "Spread a Definir (Bookbuilding)"}>
-                                                                ⚡ {r.Taxa_Juros?.replace(" (Bookbuilding)", "") || "Alvo (Bookbuilding)"}
+                                                            <span className="text-amber-400 text-[11px] font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 block truncate inline-flex items-center" title={r.Taxa_Juros || "Spread a Definir (Bookbuilding)"}>
+                                                                <Icons.Clock className="w-3 h-3 inline mr-1 shrink-0" /> {r.Taxa_Juros?.replace(" (Bookbuilding)", "") || "Alvo (Bookbuilding)"}
                                                             </span>
                                                         )}
                                                     </td>
@@ -1406,5 +1416,4 @@ const App = () => {
     );
 };
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+export default App;

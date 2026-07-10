@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* Custom Glassmorphism & Animations */
 :root {
     --bg-main: #080C14;

@@ -381,6 +381,7 @@ def get_charts_overview(
     data_de: str = Query(""),
     data_ate: str = Query(""),
     incluir_estimados: Union[str, bool] = Query("false"),
+    modo_coordenador: str = Query("lider"),
     cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)

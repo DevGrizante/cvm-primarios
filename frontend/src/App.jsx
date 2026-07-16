@@ -671,6 +671,7 @@ const App = () => {
 
     // Unified Debounced Data Fetch with AbortController
     useEffect(() => {
+        if (!backendReady) return;
         const controller = new AbortController();
         const signal = controller.signal;
         setLoading(true);
@@ -732,7 +733,7 @@ const App = () => {
             clearTimeout(timer);
             controller.abort();
         };
-    }, [filters, searchQuery, currentPage, pageSize, sortBy, sortOrder]);
+    }, [backendReady, filters, searchQuery, currentPage, pageSize, sortBy, sortOrder]);
 
     const handleFilterChange = (key, val) => {
         setFilters(prev => ({ ...prev, [key]: val }));
@@ -1373,7 +1374,7 @@ const App = () => {
                                                     Lider: pointData.coordenador || "",
                                                 });
                                             }
-                                            const targetUrl = `${API_BASE_URL || ""}/api/offers/${pointData.id}`;
+                                            const targetUrl = `${API_BASE}/offers/${pointData.id}`;
                                             fetch(targetUrl)
                                                 .then(res => res.ok ? res.json() : null)
                                                 .then(fullData => {

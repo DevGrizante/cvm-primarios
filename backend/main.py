@@ -164,7 +164,9 @@ def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
             with _SRE_LOCK:
                 _SRE_NEGATIVE_CACHE[req_id] = time.time()
     except Exception:
-        pass
+        with _SRE_LOCK:
+            # Cache failure/timeout for 45s so table doesn't hang on every request when CVM is unstable
+            _SRE_NEGATIVE_CACHE[req_id] = time.time() - 600 + 45
         
     return r
 
@@ -838,7 +840,7 @@ def get_offers(
     
     candidates = [
         r for r in paginated
-        if (not r.get("Taxa_Juros") or r.get("Taxa_Juros") in ("N/I", "(Ver Dossiê / API CVM)", "-", "") or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
+        if (not r.get("Taxa_Juros") or any(k in str(r.get("Taxa_Juros")) for k in ("N/I", "Ver Dossiê", "Ver Regulamento", "Não Informado", "-")) or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
         and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
     ]
     if candidates:
@@ -892,7 +894,7 @@ def get_search(
     
     candidates = [
         r for r in paginated
-        if (not r.get("Taxa_Juros") or r.get("Taxa_Juros") in ("N/I", "(Ver Dossiê / API CVM)", "-", "") or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
+        if (not r.get("Taxa_Juros") or any(k in str(r.get("Taxa_Juros")) for k in ("N/I", "Ver Dossiê", "Ver Regulamento", "Não Informado", "-")) or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
         and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
     ]
     if candidates:

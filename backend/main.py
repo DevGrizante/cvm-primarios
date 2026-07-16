@@ -21,7 +21,18 @@ try:
 except ModuleNotFoundError:
     from backend.data_engine import engine
 
-app = FastAPI(title="CVM Primários Monitor PRO API", version="2.0.0")
+is_prod = bool(os.getenv("RENDER"))
+app = FastAPI(
+    title="CVM Primários Monitor PRO API",
+    version="2.0.0",
+    docs_url=None if is_prod else "/docs",
+    redoc_url=None if is_prod else "/redoc",
+    openapi_url=None if is_prod else "/openapi.json"
+)
+
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 
 def _val(x):
     v = x.default if hasattr(x, "default") else x
@@ -157,21 +168,65 @@ def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
         
     return r
 
-# Enable CORS for local Vite development
+# Enable strict CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://cvm-primarios.onrender.com", "http://localhost:5173", "http://localhost:8000"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+_IP_RATE_BUCKET = defaultdict(list)
+_EXPORT_RATE_LIMIT = defaultdict(list)
+_RESPONSE_CACHE = {}
+
+def _get_cached_response(cache_key: str):
+    if cache_key in _RESPONSE_CACHE:
+        ts, payload = _RESPONSE_CACHE[cache_key]
+        if time.time() - ts < 120:
+            return payload
+        else:
+            del _RESPONSE_CACHE[cache_key]
+    return None
+
+def _put_cached_response(cache_key: str, payload):
+    if len(_RESPONSE_CACHE) >= 200:
+        oldest_key = min(_RESPONSE_CACHE.keys(), key=lambda k: _RESPONSE_CACHE[k][0])
+        del _RESPONSE_CACHE[oldest_key]
+    _RESPONSE_CACHE[cache_key] = (time.time(), payload)
+
+@app.middleware("http")
+async def rate_limit_and_timing_middleware(request: Request, call_next):
+    start_time = time.time()
+    ip = request.client.host if request.client else "127.0.0.1"
+    now = time.time()
+    
+    _IP_RATE_BUCKET[ip] = [t for t in _IP_RATE_BUCKET[ip] if now - t < 60]
+    if len(_IP_RATE_BUCKET[ip]) >= 120:
+        return JSONResponse(status_code=429, content={"detail": "Too many requests. Please slow down."})
+    _IP_RATE_BUCKET[ip].append(now)
+    
+    response = await call_next(request)
+    duration = (time.time() - start_time) * 1000
+    if request.url.path.startswith("/api/"):
+        print(f"[TIMING] {request.url.path} took {duration:.2f}ms")
+        if request.url.path in ("/api/dashboard", "/api/offers", "/api/kpis", "/api/rankings") or request.url.path.startswith("/api/charts"):
+            response.headers["Cache-Control"] = "private, max-age=30"
+    return response
+
 @app.on_event("startup")
 def startup_event():
-    # Run ensure_data in background so the port binds immediately (Render requirement)
     print("[STARTUP] Binding port — data loading started in background thread...")
     import threading
-    threading.Thread(target=engine.ensure_data, daemon=True).start()
+    def _load_and_clear():
+        engine.ensure_data()
+        _RESPONSE_CACHE.clear()
+    threading.Thread(target=_load_and_clear, daemon=True).start()
+
 
 @app.get("/api/ready")
 def get_ready():
@@ -193,6 +248,47 @@ def get_status():
         "options": engine.options_cache
     }
 
+@app.get("/api/dashboard")
+def get_dashboard(
+    request: Request,
+    ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
+    rito: Union[List[str], str] = Query("Todos"),
+    ativo: Union[List[str], str] = Query("Todos"),
+    status: Union[List[str], str] = Query("Todos"),
+    indexador: Union[List[str], str] = Query("Todos"),
+    publico: Union[List[str], str] = Query("Todos"),
+    regime: Union[List[str], str] = Query("Todos"),
+    busca: str = Query(""),
+    data_de: str = Query(""),
+    data_ate: str = Query(""),
+    incluir_estimados: Union[str, bool] = Query("false"),
+    modo_coordenador: str = Query("lider")
+):
+    cache_key = f"/api/dashboard?{request.url.query}"
+    cached = _get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    ano_val = _val(ano); rito_val = _val(rito); ativo_val = _val(ativo); status_val = _val(status)
+    indexador_val = _val(indexador); publico_val = _val(publico); regime_val = _val(regime); busca_val = _val(busca)
+    data_de_val = _val(data_de); data_ate_val = _val(data_ate)
+    
+    rows = engine.get_filtered_rows(ano_val, rito_val, ativo_val, status_val, indexador_val, publico_val, regime_val, busca_val, data_de_val, data_ate_val)
+    
+    kpis_data = get_kpis(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, cached_rows=rows)
+    overview_data = get_charts_overview(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, modo_coordenador=modo_coordenador, cached_rows=rows)
+    investors_data = get_charts_investors(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, cached_rows=rows)
+    rankings_data = get_rankings(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, limit=100, incluir_estimados=incluir_estimados, modo_coordenador=modo_coordenador, cached_rows=rows)
+    
+    payload = {
+        "kpis": kpis_data,
+        "charts_overview": overview_data,
+        "investors": investors_data,
+        "rankings": rankings_data
+    }
+    _put_cached_response(cache_key, payload)
+    return payload
+
 @app.get("/api/kpis")
 def get_kpis(
     ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
@@ -205,14 +301,15 @@ def get_kpis(
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
-    incluir_estimados: Union[str, bool] = Query("false")
+    incluir_estimados: Union[str, bool] = Query("false"),
+    cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
+    rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     if not rows:
         return {
             "volume_total": 0.0,
@@ -283,20 +380,15 @@ def get_charts_overview(
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
-    incluir_estimados: Union[str, bool] = Query("false")
+    incluir_estimados: Union[str, bool] = Query("false"),
+    cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
+    rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
-    # Enrich top candidate offers concurrently so NTN-B references and real spreads/maturities are precise across all views
-    candidates_charts = [x for x in rows[:150] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))]
-    if candidates_charts:
-        with ThreadPoolExecutor(max_workers=15) as pool:
-            list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.0), candidates_charts))
-            
     if indexador != "Todos":
         rows = [x for x in rows if _match_idx(x["Indexador"], indexador)]
         
@@ -382,9 +474,19 @@ def get_charts_overview(
     lider_vol = defaultdict(float)
     lider_cnt = defaultdict(int)
     for r in rows:
-        coords = r.get("Consorcio_List") or [r.get("Lider", "Não Informado")]
-        if not isinstance(coords, list):
-            coords = [coords]
+        if modo_coordenador == "todos":
+            coords = []
+            if r.get("Coordenadores_Todos") and isinstance(r.get("Coordenadores_Todos"), dict) and r["Coordenadores_Todos"].get("coordenadores"):
+                for c in r["Coordenadores_Todos"]["coordenadores"]:
+                    nm = str(c.get("nome", "")).strip()
+                    if nm: coords.append(nm)
+            if not coords:
+                coords = r.get("Consorcio_List") or [r.get("Lider", "Não Informado")]
+            if not isinstance(coords, list):
+                coords = [coords]
+        else:
+            coords = [r.get("Lider", "Não Informado")]
+            
         for l in coords:
             if l and l != "Não Informado":
                 if not (r.get("Is_Estimated_Vol") and not inc_est):
@@ -558,13 +660,14 @@ def get_charts_investors(
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
-    incluir_estimados: Union[str, bool] = Query("false")
+    incluir_estimados: Union[str, bool] = Query("false"),
+    cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
+    rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     valid_rows = [r for r in rows if not (r.get("Is_Estimated_Vol") and not inc_est)]
     vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in valid_rows)
@@ -634,20 +737,32 @@ def get_rankings(
     data_de: str = Query(""),
     data_ate: str = Query(""),
     limit: int = Query(100),
-    incluir_estimados: Union[str, bool] = Query("false")
+    incluir_estimados: Union[str, bool] = Query("false"),
+    modo_coordenador: str = Query("lider"),
+    cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca); limit = _val(limit)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
+    rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     lider_vol = defaultdict(float)
     lider_cnt = defaultdict(int)
     for r in rows:
-        coords = r.get("Consorcio_List") or [r.get("Lider", "Não Informado")]
-        if not isinstance(coords, list):
-            coords = [coords]
+        if modo_coordenador == "todos":
+            coords = []
+            if r.get("Coordenadores_Todos") and isinstance(r.get("Coordenadores_Todos"), dict) and r["Coordenadores_Todos"].get("coordenadores"):
+                for c in r["Coordenadores_Todos"]["coordenadores"]:
+                    nm = str(c.get("nome", "")).strip()
+                    if nm: coords.append(nm)
+            if not coords:
+                coords = r.get("Consorcio_List") or [r.get("Lider", "Não Informado")]
+            if not isinstance(coords, list):
+                coords = [coords]
+        else:
+            coords = [r.get("Lider", "Não Informado")]
+            
         for l in coords:
             if l and l != "Não Informado":
                 if not (r.get("Is_Estimated_Vol") and not inc_est):
@@ -690,8 +805,8 @@ def get_offers(
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
-    page: int = Query(1),
-    page_size: int = Query(50),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     sort_by: str = Query("Data_Clean"),
     sort_order: str = Query("desc")
 ):
@@ -713,23 +828,12 @@ def get_offers(
     
     start = (page - 1) * page_size
     
-    # If indexador filter is active, enrich top candidate pool first before slicing
     if indexador != "Todos":
-        candidate_enrich = [x for x in rows[start:start + page_size + 5] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))][:10]
-        if candidate_enrich:
-            with ThreadPoolExecutor(max_workers=6) as pool:
-                list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), candidate_enrich))
         rows = [x for x in rows if _match_idx(x["Indexador"], indexador)]
         
     total = len(rows)
     end = start + page_size
     paginated = rows[start:end]
-    
-    # Live concurrent enrichment of the current page rows from official CVM SRE API (do not refilter paginated or change total after slicing)
-    items_to_enrich = [x for x in paginated if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))][:12]
-    if items_to_enrich:
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), items_to_enrich))
             
     return {
         "total": total,
@@ -792,6 +896,7 @@ def get_offer_detail(id_processo: str):
 
 @app.get("/api/export")
 def export_offers(
+    request: Request,
     ano: Union[List[str], str] = Query("Recentes (2023-2026)"),
     rito: Union[List[str], str] = Query("Todos"),
     ativo: Union[List[str], str] = Query("Todos"),
@@ -803,12 +908,22 @@ def export_offers(
     data_de: str = Query(""),
     data_ate: str = Query("")
 ):
+    ip = request.client.host if request.client else "127.0.0.1"
+    now = time.time()
+    _EXPORT_RATE_LIMIT[ip] = [t for t in _EXPORT_RATE_LIMIT[ip] if now - t < 60]
+    if len(_EXPORT_RATE_LIMIT[ip]) >= 3:
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Maximum 3 exports per minute per IP."})
+    _EXPORT_RATE_LIMIT[ip].append(now)
+
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     output = io.StringIO()
+    if len(rows) > 20000:
+        output.write("# AVISO: Exportacao truncada no limite de 20.000 registros para protecao da infraestrutura e memoria.\r\n")
+        rows = rows[:20000]
     writer = csv.writer(output, delimiter=";")
     headers = [
         "Id_Processo", "Regime", "Ano", "Data", "Rito", "Status", "Valor_Mobiliario", "Indexador",

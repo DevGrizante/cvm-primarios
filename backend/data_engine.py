@@ -428,8 +428,16 @@ class CVMDataEngine:
         
         ativo = str(row_dict.get("Valor_Mobiliario") if not is_hist else row_dict.get("Tipo_Ativo") or "").upper()
         
-        # 1. Priority 1: Explicit IPCA/Inflation terms
-        if any(w in text for w in ("IPCA", "INPC", "IGP-M", "IGPM", "INCC", "INFLAÇÃO", "IPCR", "VARIACAO DO IGPM", "VARIAÇÃO DO IGPM")):
+        # 1. Priority 1: Explicit IPCA/Inflation/NTNB terms
+        ref_ntnb = str(row_dict.get("Referencia_NTNB", "")).strip()
+        caract_str = str(row_dict.get("Caracteristicas_CVM", "")).upper()
+        taxa_str = str(row_dict.get("Taxa_Juros", "")).upper()
+        if (
+            (ref_ntnb and ref_ntnb not in ("Outras / Não Espec.", "", "None"))
+            or any(w in taxa_str for w in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLA"))
+            or any(w in caract_str for w in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLA"))
+            or any(w in text for w in ("IPCA", "INPC", "IGP-M", "IGPM", "INCC", "INFLAÇÃO", "IPCR", "VARIACAO DO IGPM", "VARIAÇÃO DO IGPM", "NTN-B", "NTNB", "TESOURO IPCA", "TN-B"))
+        ):
             return "IPCA / Inflação", False
             
         # 2. Priority 2: Explicit CDI/DI terms
@@ -552,23 +560,35 @@ class CVMDataEngine:
         import re
         taxa = str(r.get("Taxa_Juros", "")).strip()
         t_upper = taxa.upper()
+        caract_str = str(r.get("Caracteristicas_CVM", "")).upper()
+        ref_ntnb = str(r.get("Referencia_NTNB", "")).strip()
+        
+        has_ntnb_or_ipca = (
+            (ref_ntnb and ref_ntnb not in ("Outras / Não Espec.", "", "None", "None"))
+            or any(k in t_upper for k in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INPC", "IGP-M", "IGPM", "TR ", "INFLA"))
+            or t_upper.startswith("IPCA") or t_upper.endswith(" IPCA")
+            or re.search(r'\b(?:IPCA|INPC|IGP-M|IGPM|INCC|TR|INFLAÇÃO|INFLACAO|IPCR|NTN\-?B|TESOURO\s+IPCA)\b', t_upper)
+            or any(k in caract_str for k in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLAÇÃO", "INFLACAO"))
+        )
+        
+        if has_ntnb_or_ipca:
+            r["Indexador"] = "IPCA / Inflação"
+            r["Indexador_Inferido"] = False
+            return
+            
         if not taxa or taxa in ("Não Informado (CVM)", "N/A", "-", "--", "Não Informado"):
             return
         
         has_cdi = any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %", "DI+", "TAXA DI")) or t_upper.startswith("DI ") or t_upper.endswith(" DI") or re.search(r'\b(?:CDI|DI|SELIC|FLUTUANTE|FLUTUANTES|OVER|ANBID|TJLP|LIBOR)\b', t_upper)
-        has_ipca = any(k in t_upper for k in ("IPCA", "INPC", "IGP-M", "IGPM", "TR ", "INFLA")) or t_upper.startswith("IPCA") or t_upper.endswith(" IPCA") or re.search(r'\b(?:IPCA|INPC|IGP-M|IGPM|INCC|TR|INFLAÇÃO|INFLACAO|IPCR)\b', t_upper)
-        has_pre_keyword = any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX", "TAXA PRÉ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS"))
-        
         if has_cdi:
             r["Indexador"] = "CDI / DI"
             r["Indexador_Inferido"] = False
-        elif has_ipca:
-            r["Indexador"] = "IPCA / Inflação"
+            return
+
+        has_pre_keyword = any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX", "TAXA PRÉ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS"))
+        if has_pre_keyword or re.search(r'\d+[\d,.]*\s*%', taxa) or any(k in t_upper for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE", "VALOR NOMINAL UNITÁRIO", "VALOR NOMINAL UNITARIO")):
+            r["Indexador"] = "PRÉ (Prefixado)"
             r["Indexador_Inferido"] = False
-        elif has_pre_keyword or re.search(r'\d+[\d,.]*\s*%', taxa) or any(k in t_upper for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE", "VALOR NOMINAL UNITÁRIO", "VALOR NOMINAL UNITARIO")):
-            if not has_cdi and not has_ipca:
-                r["Indexador"] = "PRÉ (Prefixado)"
-                r["Indexador_Inferido"] = False
 
     def _extract_vencimento(self, r, is_hist):
         import re
@@ -855,10 +875,10 @@ class CVMDataEngine:
                     row_dict["Lider"] = lider_norm
                     row_dict["Consorcio"] = consorcio_str
                     row_dict["Consorcio_List"] = consorcio_list
-                    self._sync_row_indexador(row_dict)
                     ref, fonte = self._extract_ntnb_reference(row_dict)
                     row_dict["Referencia_NTNB"] = ref
                     row_dict["NTNB_Fonte"] = fonte
+                    self._sync_row_indexador(row_dict)
                     unified.append(row_dict)
 
             # 2. Instrução 400/476 (Historical up to 2023)
@@ -948,10 +968,10 @@ class CVMDataEngine:
                     row_dict["Lider"] = lider_norm
                     row_dict["Consorcio"] = consorcio_str
                     row_dict["Consorcio_List"] = consorcio_list
-                    self._sync_row_indexador(row_dict)
                     ref, fonte = self._extract_ntnb_reference(row_dict)
                     row_dict["Referencia_NTNB"] = ref
                     row_dict["NTNB_Fonte"] = fonte
+                    self._sync_row_indexador(row_dict)
                     unified.append(row_dict)
             z.close()
         except Exception as e:
@@ -1123,10 +1143,10 @@ class CVMDataEngine:
                             r["Vencimento"] = c_data["Vencimento"]
                         if c_data.get("Caracteristicas_CVM"):
                             r["Caracteristicas_CVM"] = c_data["Caracteristicas_CVM"]
-                        self._sync_row_indexador(r)
                         ref, fonte = self._extract_ntnb_reference(r)
                         r["Referencia_NTNB"] = ref
                         r["NTNB_Fonte"] = fonte
+                        self._sync_row_indexador(r)
                 total_rows = max(len(self.rows), 1)
                 print(f"Applied {matches_count} cached SRE enrichments out of {len(cached_sre)} cache entries (match rate: {matches_count/total_rows*100:.1f}% of offerings).")
 
@@ -1260,10 +1280,10 @@ class CVMDataEngine:
                         else:
                             r["Vencimento"] = venc_e[:7]
                         updated = True
-                    self._sync_row_indexador(r)
                     ref, fonte = self._extract_ntnb_reference(r)
                     r["Referencia_NTNB"] = ref
                     r["NTNB_Fonte"] = fonte
+                    self._sync_row_indexador(r)
                     cached_sre[req_id] = {
                         "Taxa_Juros": taxa_e,
                         "Vencimento": r.get("Vencimento"),
@@ -1350,6 +1370,13 @@ class CVMDataEngine:
         
         res = []
         for r in self.rows:
+            # Global constraint: unconditionally ignore all emissions prior to 01/2023 (2023-01)
+            r_dt = str(r.get("Data_Clean", ""))[:7]
+            r_ano = str(r.get("Ano", "")).strip()
+            if len(r_dt) >= 7 and r_dt[:4].isdigit():
+                if r_dt < "2023-01": continue
+            elif r_ano.isdigit() and r_ano < "2023": continue
+
             if "Todos" not in reg_list:
                 match_reg = False
                 for reg_item in reg_list:

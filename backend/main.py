@@ -139,13 +139,15 @@ def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
                 
                 if not taxa_encontrada and not campos_encontrados and not venc_encontrado:
                     _SRE_NEGATIVE_CACHE[req_id] = time.time()
-                engine._sync_row_indexador(r)
 
             # Always recalculate NTN-B after any enrichment update
             if taxa_encontrada or campos_encontrados or venc_encontrado:
                 ref, fonte = engine._extract_ntnb_reference(r)
                 r["Referencia_NTNB"] = ref
                 r["NTNB_Fonte"] = fonte
+                engine._sync_row_indexador(r)
+            else:
+                engine._sync_row_indexador(r)
         else:
             with _SRE_LOCK:
                 _SRE_NEGATIVE_CACHE[req_id] = time.time()
@@ -754,6 +756,10 @@ def get_search(
     
     results = []
     for r in engine.rows:
+        r_dt = str(r.get("Data_Clean", ""))[:7]
+        r_ano = str(r.get("Ano", "")).strip()
+        if (len(r_dt) >= 7 and r_dt[:4].isdigit() and r_dt < "2023-01") or (r_ano.isdigit() and r_ano < "2023"):
+            continue
         t_lower = str(type_val).lower()
         match = False
         if t_lower in ("emissor", "todos"):

@@ -1151,7 +1151,7 @@ class CVMDataEngine:
         status_list = sorted(list(set(r["Status"] for r in self.rows if r["Status"] != "Não Informado")))
         indexadores = ["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)", "Outros / Não Informado"]
         
-        valid_dates = sorted(list(set(str(r.get("Data_Clean", ""))[:7] for r in self.rows if len(str(r.get("Data_Clean", ""))) >= 7 and str(r.get("Data_Clean", ""))[:4].isdigit())))
+        valid_dates = sorted(list(set(str(r.get("Data_Clean", ""))[:7] for r in self.rows if len(str(r.get("Data_Clean", ""))) >= 7 and str(r.get("Data_Clean", ""))[:4].isdigit() and str(r.get("Data_Clean", ""))[:7] >= "2023-01")))
         data_min = valid_dates[0] if valid_dates else "2023-01"
         data_max = valid_dates[-1] if valid_dates else "2026-07"
         
@@ -1344,6 +1344,8 @@ class CVMDataEngine:
         
         has_date_range = bool((data_de and str(data_de).strip() not in ("Todos", "")) or (data_ate and str(data_ate).strip() not in ("Todos", "")))
         de_str = str(data_de).strip()[:7] if (data_de and str(data_de).strip() not in ("Todos", "")) else ""
+        if de_str and de_str < "2023-01":
+            de_str = "2023-01"
         ate_str = str(data_ate).strip()[:7] if (data_ate and str(data_ate).strip() not in ("Todos", "")) else ""
         
         res = []
@@ -1359,6 +1361,7 @@ class CVMDataEngine:
             if has_date_range:
                 r_dt = str(r.get("Data_Clean", ""))[:7]
                 if len(r_dt) >= 7 and r_dt[:4].isdigit():
+                    if r_dt < "2023-01": continue
                     if de_str and r_dt < de_str: continue
                     if ate_str and r_dt > ate_str: continue
                 else:

@@ -151,7 +151,7 @@ const OffersTableSkeleton = () => (
 );
 
 // Dual-Thumb Date Range Slider Component (MM/AA) with Debounce
-const DateRangeSlider = ({ minDateStr = "2018-01", maxDateStr = "2026-07", currentDe, currentAte, onChange, className }) => {
+const DateRangeSlider = ({ minDateStr = "2023-01", maxDateStr = "2026-07", currentDe, currentAte, onChange, className }) => {
     const parseYm = (str, fallback) => {
         if (!str || typeof str !== "string" || !str.includes("-")) return fallback;
         const [y, m] = str.split("-").map(Number);
@@ -169,14 +169,15 @@ const DateRangeSlider = ({ minDateStr = "2018-01", maxDateStr = "2026-07", curre
         return `${String(m).padStart(2, "0")}/${String(y).slice(-2)}`;
     };
 
-    const minVal = parseYm(minDateStr, 2018 * 12);
+    const effectiveMinStr = minDateStr && minDateStr >= "2023-01" ? minDateStr : "2023-01";
+    const minVal = parseYm(effectiveMinStr, 2023 * 12);
     const maxVal = parseYm(maxDateStr, 2026 * 12 + 6);
     
-    const [startVal, setStartVal] = useState(() => currentDe ? parseYm(currentDe, minVal) : minVal);
+    const [startVal, setStartVal] = useState(() => currentDe && currentDe >= "2023-01" ? parseYm(currentDe, minVal) : minVal);
     const [endVal, setEndVal] = useState(() => currentAte ? parseYm(currentAte, maxVal) : maxVal);
 
     useEffect(() => {
-        setStartVal(currentDe ? parseYm(currentDe, minVal) : minVal);
+        setStartVal(currentDe && currentDe >= "2023-01" ? parseYm(currentDe, minVal) : minVal);
         setEndVal(currentAte ? parseYm(currentAte, maxVal) : maxVal);
     }, [currentDe, currentAte, minVal, maxVal]);
 
@@ -489,7 +490,6 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                 <tr>
                                                     <th className="py-3 px-4 font-bold border-r border-blue-800/60 min-w-[260px]">Segmento / Categoria do Investidor</th>
                                                     <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 bg-[#002850] min-w-[120px]">Número de Investidores</th>
-                                                    <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 min-w-[160px]">Quantidade de Valores Mobiliários</th>
                                                     <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 bg-[#002850] min-w-[140px] text-blue-200">Volume Alocado (R$)</th>
                                                     <th className="py-3 px-4 text-right font-bold min-w-[85px] text-blue-200">Share (%)</th>
                                                 </tr>
@@ -505,9 +505,6 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                             <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-slate-300 bg-slate-900/30">
                                                                 {Number(row.investidores || 0).toLocaleString("pt-BR")}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-blue-300 font-semibold">
-                                                                {Number(row.qtde_vm || 0).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
-                                                            </td>
                                                             <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-emerald-400 bg-slate-900/30">
                                                                 {formatCurrency(row.vol_alocado || 0)}
                                                             </td>
@@ -522,7 +519,6 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                 <tr>
                                                     <td className="py-3 px-4 uppercase tracking-wider border-r border-blue-900">Total da Oferta / Colocação</td>
                                                     <td className="py-3 px-4 text-right border-r border-blue-900 text-amber-300">{totalInv.toLocaleString("pt-BR")}</td>
-                                                    <td className="py-3 px-4 text-right border-r border-blue-900 text-blue-200">{totalQtde.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</td>
                                                     <td className="py-3 px-4 text-right border-r border-blue-900 text-emerald-300">{formatCurrency(offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : totalVol)}</td>
                                                     <td className="py-3 px-4 text-right text-white">100,00%</td>
                                                 </tr>
@@ -990,7 +986,7 @@ const App = () => {
                     {/* Bottom Tier (or Center on 2xl): Date Range Slider */}
                     <div className="w-full 2xl:w-auto 2xl:flex-1 2xl:max-w-lg 2xl:mx-3 min-w-0">
                         <DateRangeSlider 
-                            minDateStr={status.data_min || "2018-01"} 
+                            minDateStr={status.data_min && status.data_min >= "2023-01" ? status.data_min : "2023-01"} 
                             maxDateStr={status.data_max || "2026-07"} 
                             currentDe={filters.data_de} 
                             currentAte={filters.data_ate} 

@@ -133,6 +133,43 @@ class CVMDataEngine:
             print(f"{idx}. {nome} - R$ {vol/1e9:.2f} Bi")
         print("===================================================")
 
+    def _download_zip_to_file(self, url, dest_path, verify_ssl=True, timeout=120):
+        """Download zip from url to dest_path using chunked streaming. Returns True on success."""
+        import shutil
+        ctx = ssl.create_default_context() if verify_ssl else ssl._create_unverified_context()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        }
+        req = urllib.request.Request(url, headers=headers)
+        tmp_path = dest_path + ".tmp"
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(262144)  # 256KB chunks — avoids full-RAM load
+                        if not chunk:
+                            break
+                        f.write(chunk)
+            size = os.path.getsize(tmp_path)
+            if size < 50000:
+                print(f"[WARN] Downloaded file too small ({size} bytes), likely an error page. Aborting.")
+                os.remove(tmp_path)
+                return False
+            shutil.move(tmp_path, dest_path)
+            print(f"[OK] Downloaded {size/1024:.0f} KB from {url}")
+            return True
+        except Exception as e:
+            print(f"[ERR] Download failed from {url} (ssl={verify_ssl}): {e}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            return False
+
     def ensure_data(self):
         os.makedirs(CACHE_DIR, exist_ok=True)
         source_zip = None
@@ -141,30 +178,31 @@ class CVMDataEngine:
                 source_zip = ZIP_PATH
             elif os.path.exists(SCRATCH_ZIP):
                 source_zip = SCRATCH_ZIP
-        
+
         if not source_zip:
-            print("Downloading latest CVM dataset from official API (or slot refresh needed)...")
-            try:
-                ctx = ssl.create_default_context()
-                req = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
-                    with open(ZIP_PATH, "wb") as f:
-                        # Stream in 256KB chunks to avoid loading the full zip into RAM
-                        while True:
-                            chunk = resp.read(262144)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                source_zip = ZIP_PATH
-            except Exception as e:
-                print(f"Notice: Could not download fresh zip ({e}), falling back to existing cache if available.")
-                if os.path.exists(ZIP_PATH):
+            print("Downloading latest CVM dataset from official portal...")
+            # Try multiple download strategies in order
+            download_attempts = [
+                (ZIP_URL, True),   # Official URL with SSL verification
+                (ZIP_URL, False),  # Official URL without SSL (some cloud environments need this)
+                # Alternative: direct file URL
+                ("https://dados.cvm.gov.br/dados/OFERTA/DISTRIB/DADOS/oferta_distribuicao.zip", False),
+            ]
+            for dl_url, verify_ssl in download_attempts:
+                print(f"  Trying: {dl_url} (ssl_verify={verify_ssl})...")
+                if self._download_zip_to_file(dl_url, ZIP_PATH, verify_ssl=verify_ssl):
                     source_zip = ZIP_PATH
-                elif os.path.exists(SCRATCH_ZIP):
+                    break
+            if not source_zip:
+                print("All download attempts failed. Falling back to existing cache if available.")
+                if os.path.exists(ZIP_PATH) and os.path.getsize(ZIP_PATH) > 50000:
+                    source_zip = ZIP_PATH
+                elif os.path.exists(SCRATCH_ZIP) and os.path.getsize(SCRATCH_ZIP) > 50000:
                     source_zip = SCRATCH_ZIP
-        
+
         self.load_from_zip(source_zip)
         self._start_scheduler_worker()
+
 
     def _clean_text(self, text):
         if not text or text == "N/A" or text == "" or text == "---" or text == "--":
@@ -691,22 +729,21 @@ class CVMDataEngine:
         def _retry_loop():
             time.sleep(30)
             print("[DEGRADED MODE] Attempting background download retry from CVM portal...")
-            try:
-                ctx = ssl.create_default_context()
-                req = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
-                with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
-                    os.makedirs(CACHE_DIR, exist_ok=True)
-                    with open(ZIP_PATH, "wb") as f:
-                        while True:
-                            chunk = resp.read(262144)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                if os.path.exists(ZIP_PATH) and os.path.getsize(ZIP_PATH) > 100000:
-                    print("[DEGRADED MODE] Background download successful! Reloading data engine...")
-                    self.load_from_zip(ZIP_PATH)
-            except Exception as e:
-                print(f"[DEGRADED MODE] Retry failed: {e}. Will keep retrying on next cycle.")
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            download_attempts = [
+                (ZIP_URL, True),
+                (ZIP_URL, False),
+            ]
+            success = False
+            for dl_url, verify_ssl in download_attempts:
+                if self._download_zip_to_file(dl_url, ZIP_PATH, verify_ssl=verify_ssl):
+                    success = True
+                    break
+            if success and os.path.exists(ZIP_PATH) and os.path.getsize(ZIP_PATH) > 50000:
+                print("[DEGRADED MODE] Background download successful! Reloading data engine...")
+                self.load_from_zip(ZIP_PATH)
+            else:
+                print("[DEGRADED MODE] Retry failed. Will keep retrying on next cycle.")
         threading.Thread(target=_retry_loop, daemon=True).start()
 
     def load_from_zip(self, zip_filepath):

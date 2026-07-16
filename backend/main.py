@@ -61,6 +61,9 @@ _SRE_NEGATIVE_CACHE = {}
 def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
     if not isinstance(r, dict):
         return r
+    req_link_id = str(r.get("Numero_Requerimento", "")).strip() if str(r.get("Numero_Requerimento", "")).isdigit() else str(r.get("Id_Processo", "")).strip()
+    if req_link_id and req_link_id.isdigit():
+        r["Link_CVM_SRE"] = f"https://web.cvm.gov.br/app/sre-publico/#/oferta-publica/{req_link_id}"
     if r.get("Taxa_Declarada") and r.get("Caracteristicas_CVM") and r.get("Vencimento") != "N/I":
         return r
         
@@ -136,22 +139,13 @@ def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
                 
                 if not taxa_encontrada and not campos_encontrados and not venc_encontrado:
                     _SRE_NEGATIVE_CACHE[req_id] = time.time()
-                elif r.get("Taxa_Juros"):
-                    t_upper = str(r["Taxa_Juros"]).upper()
-                    if any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %")):
-                        r["Indexador"] = "CDI / DI"
-                        if r.get("Taxa_Declarada") or not any(w in t_upper for w in ("VER DOSSIÊ", "A DEFINIR", "NÃO INFORMADO")):
-                            r["Indexador_Inferido"] = False
-                    elif any(k in t_upper for k in ("IPCA", "INPC", "IGP-M", "IGPM", "TR ")):
-                        r["Indexador"] = "IPCA / Inflação"
-                        if r.get("Taxa_Declarada") or not any(w in t_upper for w in ("VER DOSSIÊ", "A DEFINIR", "NÃO INFORMADO")):
-                            r["Indexador_Inferido"] = False
-                    elif any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX")) or re.match(r'^\d+[\d,.]*\s*%', str(r["Taxa_Juros"])):
-                        r["Indexador"] = "PRÉ (Prefixado)"
-                        if r.get("Taxa_Declarada") or not any(w in t_upper for w in ("VER DOSSIÊ", "A DEFINIR", "NÃO INFORMADO")):
-                            r["Indexador_Inferido"] = False
-                            
-                    r["Referencia_NTNB"] = engine._extract_ntnb_reference(r)
+                engine._sync_row_indexador(r)
+
+            # Always recalculate NTN-B after any enrichment update
+            if taxa_encontrada or campos_encontrados or venc_encontrado:
+                ref, fonte = engine._extract_ntnb_reference(r)
+                r["Referencia_NTNB"] = ref
+                r["NTNB_Fonte"] = fonte
         else:
             with _SRE_LOCK:
                 _SRE_NEGATIVE_CACHE[req_id] = time.time()
@@ -172,8 +166,21 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    print("Initializing CVM Data Engine...")
-    engine.ensure_data()
+    # Run ensure_data in background so the port binds immediately (Render requirement)
+    print("[STARTUP] Binding port — data loading started in background thread...")
+    import threading
+    threading.Thread(target=engine.ensure_data, daemon=True).start()
+
+@app.get("/api/ready")
+def get_ready():
+    """Returns loading status so the frontend can show a loading screen."""
+    is_ready = len(engine.rows) > 0
+    return {
+        "ready": is_ready,
+        "rows_count": len(engine.rows),
+        "last_update": engine.last_update,
+        "message": "Dados carregados com sucesso." if is_ready else "Carregando dados CVM em background... Aguarde."
+    }
 
 @app.get("/api/status")
 def get_status():
@@ -194,13 +201,16 @@ def get_kpis(
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
+    data_de: str = Query(""),
+    data_ate: str = Query(""),
     incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
+    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     if not rows:
         return {
             "volume_total": 0.0,
@@ -269,18 +279,21 @@ def get_charts_overview(
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
+    data_de: str = Query(""),
+    data_ate: str = Query(""),
     incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
+    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     # Enrich top candidate offers concurrently so NTN-B references and real spreads/maturities are precise across all views
-    candidates_charts = [x for x in rows[:25] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))]
+    candidates_charts = [x for x in rows[:150] if not x.get("Taxa_Declarada") and (x.get("Numero_Requerimento") or x.get("Id_Processo"))]
     if candidates_charts:
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.2), candidates_charts))
+        with ThreadPoolExecutor(max_workers=15) as pool:
+            list(pool.map(lambda item: _enrich_offer_from_api(item, timeout=1.0), candidates_charts))
             
     if indexador != "Todos":
         rows = [x for x in rows if _match_idx(x["Indexador"], indexador)]
@@ -311,11 +324,10 @@ def get_charts_overview(
             dt = str(r.get("Data_Clean", ""))
             if len(dt) >= 7 and dt[:4].isdigit() and dt[4] == "-":
                 ym = dt[:7]
-                if dt[:4] in ("2024", "2025", "2026"):
-                    idx_type = r.get("Indexador", "")
-                    if idx_type == "CDI / DI": month_map[ym]["CDI"] += r["Volume_Float"]
-                    elif idx_type == "IPCA / Inflação": month_map[ym]["IPCA"] += r["Volume_Float"]
-                    elif idx_type == "PRÉ (Prefixado)": month_map[ym]["PRE"] += r["Volume_Float"]
+                idx_type = r.get("Indexador", "")
+                if idx_type == "CDI / DI": month_map[ym]["CDI"] += r["Volume_Float"]
+                elif idx_type == "IPCA / Inflação": month_map[ym]["IPCA"] += r["Volume_Float"]
+                elif idx_type == "PRÉ (Prefixado)": month_map[ym]["PRE"] += r["Volume_Float"]
                 
     sorted_months = sorted(month_map.keys())
     m_labels = [f"{month_names.get(ym[5:7], ym[5:7])}/{ym[2:4]}" for ym in sorted_months]
@@ -326,31 +338,33 @@ def get_charts_overview(
         "pre": [round(month_map[ym]["PRE"], 2) for ym in sorted_months]
     }
     
-    ativo_vol = defaultdict(float)
-    ativo_cnt = defaultdict(int)
+    year_map = defaultdict(lambda: {"CDI": 0.0, "IPCA": 0.0, "PRE": 0.0, "Outros": 0.0, "Total": 0.0})
     for r in rows:
-        a = r["Ativo"]
-        if a and a != "Não Informado":
-            if not (r.get("Is_Estimated_Vol") and not inc_est):
-                ativo_vol[a] += r["Volume_Float"]
-            ativo_cnt[a] += 1
-            
-    top_ativos_list = sorted(ativo_vol.items(), key=lambda x: x[1], reverse=True)[:10]
-    top_ativos = {
-        "labels": [k for k, v in top_ativos_list],
-        "volumes": [round(v, 2) for k, v in top_ativos_list],
-        "counts": [ativo_cnt[k] for k, v in top_ativos_list]
-    }
-    
-    status_map = defaultdict(int)
-    for r in rows:
-        s = r["Status"]
-        if s and s != "Não Informado":
-            status_map[s] += 1
-    top_status = sorted(status_map.items(), key=lambda x: x[1], reverse=True)[:8]
-    status_data = {
-        "labels": [k for k, v in top_status],
-        "counts": [v for k, v in top_status]
+        if not (r.get("Is_Estimated_Vol") and not inc_est):
+            y = str(r.get("Ano", "")).strip()
+            if len(y) == 4 and y.isdigit() and int(y) >= 2010:
+                idx_type = r.get("Indexador", "")
+                vol = r["Volume_Float"]
+                if idx_type == "CDI / DI": year_map[y]["CDI"] += vol
+                elif idx_type == "IPCA / Inflação": year_map[y]["IPCA"] += vol
+                elif idx_type == "PRÉ (Prefixado)": year_map[y]["PRE"] += vol
+                else: year_map[y]["Outros"] += vol
+                year_map[y]["Total"] += vol
+                
+    sorted_y_keys = sorted(year_map.keys())
+    cum_vol = 0.0
+    cum_list = []
+    for y in sorted_y_keys:
+        cum_vol += year_map[y]["Total"]
+        cum_list.append(round(cum_vol, 2))
+        
+    yearly_indexer = {
+        "labels": sorted_y_keys,
+        "cdi": [round(year_map[y]["CDI"], 2) for y in sorted_y_keys],
+        "ipca": [round(year_map[y]["IPCA"], 2) for y in sorted_y_keys],
+        "pre": [round(year_map[y]["PRE"], 2) for y in sorted_y_keys],
+        "outros": [round(year_map[y]["Outros"], 2) for y in sorted_y_keys],
+        "cumulativo": cum_list
     }
     
     # 1. Histórico de volume de emissão mês a mês
@@ -366,12 +380,15 @@ def get_charts_overview(
     lider_vol = defaultdict(float)
     lider_cnt = defaultdict(int)
     for r in rows:
-        l = r["Lider"]
-        if l and l != "Não Informado":
-            if not (r.get("Is_Estimated_Vol") and not inc_est):
-                lider_vol[l] += r["Volume_Float"]
-            lider_cnt[l] += 1
-    top_lideres_list = sorted(lider_vol.items(), key=lambda x: x[1], reverse=True)[:12]
+        coords = r.get("Consorcio_List") or [r.get("Lider", "Não Informado")]
+        if not isinstance(coords, list):
+            coords = [coords]
+        for l in coords:
+            if l and l != "Não Informado":
+                if not (r.get("Is_Estimated_Vol") and not inc_est):
+                    lider_vol[l] += r["Volume_Float"]
+                lider_cnt[l] += 1
+    top_lideres_list = sorted(lider_vol.items(), key=lambda x: x[1], reverse=True)[:100]
     top_coordenadores = {
         "labels": [k for k, v in top_lideres_list],
         "volumes": [round(v, 2) for k, v in top_lideres_list],
@@ -387,14 +404,14 @@ def get_charts_overview(
             if not (r.get("Is_Estimated_Vol") and not inc_est):
                 emissor_vol[e] += r["Volume_Float"]
             emissor_cnt[e] += 1
-    top_emiss_list = sorted(emissor_vol.items(), key=lambda x: x[1], reverse=True)[:12]
+    top_emiss_list = sorted(emissor_vol.items(), key=lambda x: x[1], reverse=True)[:100]
     top_emissores = {
         "labels": [k for k, v in top_emiss_list],
         "volumes": [round(v, 2) for k, v in top_emiss_list],
         "counts": [emissor_cnt[k] for k, v in top_emiss_list]
     }
     
-    # 4. Vencimento X Spread
+    # 4. Vencimento X Spread (scatter/bubble)
     venc_map_cdi = defaultdict(list)
     venc_map_ipca = defaultdict(list)
     venc_points = []
@@ -407,10 +424,13 @@ def get_charts_overview(
                 v_year = "20" + v.split("/")[-1][-2:] if v.split("/")[-1].isdigit() else ""
             elif len(v) == 4 and v.isdigit():
                 v_year = v
-            if not v_year or not v_year.isdigit() or int(v_year) < 2024 or int(v_year) > 2060:
+            if not v_year or not v_year.isdigit() or int(v_year) < 2000 or int(v_year) > 2060:
                 continue
             
-            # Extract numeric rate/spread
+            idx_lbl = str(r.get("Indexador", ""))
+            if any(k in idx_lbl.upper() for k in ("PRÉ", "PRE ", "PREFIX")):
+                continue
+            
             val_float = None
             m = re.search(r'[\+\s\(](\d+[\d,.]*)\s*%', t) or re.search(r'(\d+[\d,.]*)\s*%', t) or re.search(r'(\d+[\d,.]*)\s*(?:aa|a\.a\.)', t, re.I)
             if m:
@@ -419,87 +439,109 @@ def get_charts_overview(
                 except Exception:
                     pass
             if val_float is not None and 0.01 <= val_float <= 30.0:
-                idx_lbl = r.get("Indexador", "")
-                venc_points.append({
-                    "x": f"{v_year}",
-                    "vencimento": v,
+                point = {
+                    "x": int(v_year),
                     "y": round(val_float, 2),
+                    "r": round(min(max((r["Volume_Float"] / 1e6) ** 0.5 / 3, 3), 16), 1),
+                    "vencimento": v,
                     "emissor": r["Emissor"],
                     "taxa": t,
                     "indexador": idx_lbl,
-                    "volume": r["Volume_Float"]
-                })
-                if idx_lbl == "CDI / DI":
+                    "volume": r["Volume_Float"],
+                    "id": r.get("Id_Processo", ""),
+                    "instrumento": r.get("Ativo", ""),
+                    "coordenador": r.get("Lider", ""),
+                    "is_estimated": bool(r.get("Is_Estimated_Vol"))
+                }
+                venc_points.append(point)
+                if any(k in idx_lbl.upper() for k in ("CDI", " DI")):
                     venc_map_cdi[v_year].append(val_float)
-                elif idx_lbl == "IPCA / Inflação":
+                elif any(k in idx_lbl.upper() for k in ("IPCA", "INFLA", "INPC", "IGP-M")):
                     venc_map_ipca[v_year].append(val_float)
                     
-    # If filtered rows yielded fewer than 4 distinct maturity years (e.g. because recent filings initially state Bookbuilding), merge historical spreads to show a complete curve
-    if len(set(list(venc_map_cdi.keys()) + list(venc_map_ipca.keys()))) < 4:
-        for hr in engine.rows:
-            if indexador != "Todos" and not _match_idx(hr.get("Indexador", ""), indexador):
-                continue
-            hv = str(hr.get("Vencimento", "")).strip()
-            ht = str(hr.get("Taxa_Juros", "")).strip()
-            if hv and hv != "N/I" and ht and "DEFINIR" not in ht.upper() and "DOSSIÊ" not in ht.upper():
-                h_year = ""
-                if len(hv) >= 5 and "/" in hv:
-                    h_year = "20" + hv.split("/")[-1][-2:] if hv.split("/")[-1].isdigit() else ""
-                elif len(hv) == 4 and hv.isdigit():
-                    h_year = hv
-                if h_year and h_year.isdigit() and 2024 <= int(h_year) <= 2060:
-                    hm = re.search(r'[\+\s\(](\d+[\d,.]*)\s*%', ht) or re.search(r'(\d+[\d,.]*)\s*%', ht) or re.search(r'(\d+[\d,.]*)\s*(?:aa|a\.a\.)', ht, re.I)
-                    if hm:
-                        try:
-                            hval = float(hm.group(1).replace(",", "."))
-                            if 0.01 <= hval <= 30.0:
-                                h_idx = hr.get("Indexador", "")
-                                if h_idx == "CDI / DI":
-                                    venc_map_cdi[h_year].append(hval)
-                                elif h_idx == "IPCA / Inflação":
-                                    venc_map_ipca[h_year].append(hval)
-                        except Exception:
-                            pass
-
-    sorted_v_years = sorted(list(set(list(venc_map_cdi.keys()) + list(venc_map_ipca.keys()))))[:12]
+    # Sort by volume descending, keep top 500 points
+    venc_points.sort(key=lambda p: p["volume"], reverse=True)
+    venc_points = venc_points[:500]
+    
+    # Separate points by indexer for frontend datasets
+    cdi_points = [p for p in venc_points if any(k in p["indexador"].upper() for k in ("CDI", " DI"))]
+    ipca_points = [p for p in venc_points if any(k in p["indexador"].upper() for k in ("IPCA", "INFLA", "INPC", "IGP-M"))]
+    
+    def _median(lst):
+        if not lst:
+            return None
+        s = sorted(lst)
+        n = len(s)
+        if n % 2 == 1:
+            return round(s[n // 2], 2)
+        return round((s[n // 2 - 1] + s[n // 2]) / 2, 2)
+    
+    all_years = sorted(set(list(venc_map_cdi.keys()) + list(venc_map_ipca.keys())))
+    
     vencimento_spread = {
-        "labels": sorted_v_years,
-        "cdi_spread": [round(sum(venc_map_cdi[y])/len(venc_map_cdi[y]), 2) if venc_map_cdi[y] else None for y in sorted_v_years],
-        "ipca_spread": [round(sum(venc_map_ipca[y])/len(venc_map_ipca[y]), 2) if venc_map_ipca[y] else None for y in sorted_v_years],
-        "points": venc_points[:150]
+        "labels": all_years,
+        "cdi_median": [_median(venc_map_cdi[y]) for y in all_years],
+        "ipca_median": [_median(venc_map_ipca[y]) for y in all_years],
+        "cdi_points": cdi_points,
+        "ipca_points": ipca_points
     }
     
     # 5. Volume emitido indexado em cada B (NTN-B)
-    ntnb_vol = defaultdict(float)
-    ntnb_cnt = defaultdict(int)
+    ntnb_vol_declarada = defaultdict(float)
+    ntnb_vol_aproximada = defaultdict(float)
+    ntnb_cnt_declarada = defaultdict(int)
+    ntnb_cnt_aproximada = defaultdict(int)
+    total_ipca_vol = 0.0
     for r in rows:
-        if r.get("Indexador") == "IPCA / Inflação" and not (r.get("Is_Estimated_Vol") and not inc_est):
+        idx_val = str(r.get("Indexador", "")).upper()
+        if any(k in idx_val for k in ("IPCA", "INFLA", "INPC", "IGP-M")) and not (r.get("Is_Estimated_Vol") and not inc_est):
+            vol = r["Volume_Float"]
+            total_ipca_vol += vol
             ref = str(r.get("Referencia_NTNB", "Outras / Não Espec.")).strip()
+            fonte = str(r.get("NTNB_Fonte", "nenhuma")).strip()
             if not ref or ref == "N/I" or not ref.startswith("NTN-B"):
                 ref = "Outras / Não Espec."
-            ntnb_vol[ref] += r["Volume_Float"]
-            ntnb_cnt[ref] += 1
-            
-    ntnb_sorted_keys = sorted([k for k in ntnb_vol.keys() if k != "Outras / Não Espec."], key=lambda x: x.split()[-1] if x.split()[-1].isdigit() else "9999")
-    if "Outras / Não Espec." in ntnb_vol and ntnb_vol["Outras / Não Espec."] > 0:
+                fonte = "nenhuma"
+            if fonte == "declarada":
+                ntnb_vol_declarada[ref] += vol
+                ntnb_cnt_declarada[ref] += 1
+            elif fonte == "aproximada":
+                ntnb_vol_aproximada[ref] += vol
+                ntnb_cnt_aproximada[ref] += 1
+            else:
+                ntnb_vol_declarada["Outras / Não Espec."] += vol
+                ntnb_cnt_declarada["Outras / Não Espec."] += 1
+    
+    all_ntnb_keys = set(list(ntnb_vol_declarada.keys()) + list(ntnb_vol_aproximada.keys()))
+    ntnb_sorted_keys = sorted(
+        [k for k in all_ntnb_keys if k != "Outras / Não Espec."],
+        key=lambda x: int(x.split()[-1]) if x.split()[-1].isdigit() else 9999
+    )
+    outras_vol = ntnb_vol_declarada.get("Outras / Não Espec.", 0) + ntnb_vol_aproximada.get("Outras / Não Espec.", 0)
+    if outras_vol > 0:
         ntnb_sorted_keys.append("Outras / Não Espec.")
-        
+    
+    classificado_vol = sum(ntnb_vol_declarada.get(k, 0) + ntnb_vol_aproximada.get(k, 0) for k in ntnb_sorted_keys if k != "Outras / Não Espec.")
+    cobertura = round((classificado_vol / total_ipca_vol * 100), 1) if total_ipca_vol > 0 else 0.0
+    
     ntnb_volume = {
         "labels": ntnb_sorted_keys,
-        "volumes": [round(ntnb_vol[k], 2) for k in ntnb_sorted_keys],
-        "counts": [ntnb_cnt[k] for k in ntnb_sorted_keys]
+        "vol_declarada": [round(ntnb_vol_declarada.get(k, 0), 2) for k in ntnb_sorted_keys],
+        "vol_aproximada": [round(ntnb_vol_aproximada.get(k, 0), 2) for k in ntnb_sorted_keys],
+        "cnt_declarada": [ntnb_cnt_declarada.get(k, 0) for k in ntnb_sorted_keys],
+        "cnt_aproximada": [ntnb_cnt_aproximada.get(k, 0) for k in ntnb_sorted_keys],
+        "cobertura": cobertura
     }
     
     return {
         "temporal": temporal_data,
         "monthly_indexer": monthly_indexer,
         "monthly_volume": monthly_volume,
-        "top_ativos": top_ativos,
+        "yearly_indexer": yearly_indexer,
         "top_coordenadores": top_coordenadores,
         "top_emissores": top_emissores,
         "vencimento_spread": vencimento_spread,
-        "ntnb_volume": ntnb_volume,
-        "status_funnel": status_data
+        "ntnb_volume": ntnb_volume
     }
 
 @app.get("/api/charts/investors")
@@ -512,12 +554,15 @@ def get_charts_investors(
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
+    data_de: str = Query(""),
+    data_ate: str = Query(""),
     incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
+    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     valid_rows = [r for r in rows if not (r.get("Is_Estimated_Vol") and not inc_est)]
     vol_pf = sum(r["Vol_Pessoa_Fisica"] for r in valid_rows)
@@ -532,8 +577,18 @@ def get_charts_investors(
         cnt_pf = sum(r["Qtd_Inv_Pessoa_Fisica"] for r in valid_rows)
         cnt_fd = sum(r["Qtd_Inv_Fundos"] for r in valid_rows)
         cnt_est = sum(r["Qtd_Inv_Estrangeiro"] for r in valid_rows)
-        lbls = ["Pessoa Física (Varejo)", "Fundos de Investimento", "Investidor Estrangeiro"]
-        vals = [cnt_pf, cnt_fd, cnt_est]
+        cnt_inst = sum(r.get("Qtd_Inv_Instituicoes", 0) for r in valid_rows)
+        cnt_prev = sum(r.get("Qtd_Inv_Previdencia", 0) for r in valid_rows)
+        cnt_seg = sum(r.get("Qtd_Inv_Seguradoras", 0) for r in valid_rows)
+        lbls = [
+            "Fundos de Investimento",
+            "Pessoa Física (Varejo)",
+            "Investidor Estrangeiro",
+            "Instituições & Intermediários",
+            "Previdência Privada",
+            "Companhias Seguradoras"
+        ]
+        vals = [cnt_fd, cnt_pf, cnt_est, cnt_inst, cnt_prev, cnt_seg]
         return {
             "type": "count",
             "labels": lbls,
@@ -574,22 +629,28 @@ def get_rankings(
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
-    limit: int = Query(15),
+    data_de: str = Query(""),
+    data_ate: str = Query(""),
+    limit: int = Query(100),
     incluir_estimados: Union[str, bool] = Query("false")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca); limit = _val(limit)
+    data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
+    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     lider_vol = defaultdict(float)
     lider_cnt = defaultdict(int)
     for r in rows:
-        l = r["Lider"]
-        if l and l != "Não Informado":
-            if not (r.get("Is_Estimated_Vol") and not inc_est):
-                lider_vol[l] += r["Volume_Float"]
-            lider_cnt[l] += 1
+        coords = r.get("Consorcio_List") or [r.get("Lider", "Não Informado")]
+        if not isinstance(coords, list):
+            coords = [coords]
+        for l in coords:
+            if l and l != "Não Informado":
+                if not (r.get("Is_Estimated_Vol") and not inc_est):
+                    lider_vol[l] += r["Volume_Float"]
+                lider_cnt[l] += 1
             
     top_lideres = sorted(lider_vol.items(), key=lambda x: x[1], reverse=True)[:limit]
     lideres_data = [
@@ -625,6 +686,8 @@ def get_offers(
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
+    data_de: str = Query(""),
+    data_ate: str = Query(""),
     page: int = Query(1),
     page_size: int = Query(50),
     sort_by: str = Query("Data_Clean"),
@@ -632,8 +695,9 @@ def get_offers(
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    data_de = _val(data_de); data_ate = _val(data_ate)
     page = _val(page); page_size = _val(page_size); sort_by = _val(sort_by); sort_order = _val(sort_order)
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
+    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     reverse = (sort_order == "desc")
     if sort_by == "Volume_Float":
@@ -642,6 +706,8 @@ def get_offers(
         rows.sort(key=lambda x: x["Data_Clean"], reverse=reverse)
     elif sort_by == "Emissor":
         rows.sort(key=lambda x: x["Emissor"], reverse=reverse)
+    elif sort_by == "Status":
+        rows.sort(key=lambda x: x["Status"], reverse=reverse)
     
     start = (page - 1) * page_size
     
@@ -727,11 +793,14 @@ def export_offers(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
-    busca: str = Query("")
+    busca: str = Query(""),
+    data_de: str = Query(""),
+    data_ate: str = Query("")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
     indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
-    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca)
+    data_de = _val(data_de); data_ate = _val(data_ate)
+    rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")

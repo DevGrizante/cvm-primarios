@@ -9,8 +9,10 @@ import {
     LineController,
     PointElement,
     ArcElement,
-    PieController,
     DoughnutController,
+    PieController,
+    BubbleController,
+    ScatterController,
     Title,
     Tooltip,
     Legend,
@@ -26,8 +28,10 @@ Chart.register(
     LineController,
     PointElement,
     ArcElement,
-    PieController,
     DoughnutController,
+    PieController,
+    BubbleController,
+    ScatterController,
     Title,
     Tooltip,
     Legend,
@@ -82,10 +86,11 @@ const Icons = {
     AlertCircle: () => <svg className="w-4 h-4 text-amber-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     CheckCircle: () => <svg className="w-4 h-4 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     Clock: () => <svg className="w-4 h-4 text-slate-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-    Filter: () => <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+    Filter: () => <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>,
+    ExternalLink: ({ className = "w-4 h-4" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
 };
 
-const ChartWrapper = ({ type, data, options, height = 300 }) => {
+const ChartWrapper = ({ type, data, options, height = 300, onClick }) => {
     const canvasRef = useRef(null);
     const chartInstance = useRef(null);
 
@@ -101,7 +106,18 @@ const ChartWrapper = ({ type, data, options, height = 300 }) => {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                ...options
+                ...options,
+                onClick: onClick ? (evt) => {
+                    const chart = chartInstance.current;
+                    if (!chart) return;
+                    const points = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+                    if (points.length > 0) {
+                        const { datasetIndex, index } = points[0];
+                        const dataset = chart.data.datasets[datasetIndex];
+                        const pointData = dataset.data[index];
+                        onClick(pointData, datasetIndex, index);
+                    }
+                } : undefined
             }
         });
         return () => {
@@ -109,7 +125,7 @@ const ChartWrapper = ({ type, data, options, height = 300 }) => {
                 chartInstance.current.destroy();
             }
         };
-    }, [type, data, options]);
+    }, [type, data, options, onClick]);
 
     return (
         <div style={{ height: `${height}px`, width: "100%", position: "relative" }}>
@@ -133,6 +149,103 @@ const OffersTableSkeleton = () => (
         ))}
     </div>
 );
+
+// Dual-Thumb Date Range Slider Component (MM/AA) with Debounce
+const DateRangeSlider = ({ minDateStr = "2018-01", maxDateStr = "2026-07", currentDe, currentAte, onChange, className }) => {
+    const parseYm = (str, fallback) => {
+        if (!str || typeof str !== "string" || !str.includes("-")) return fallback;
+        const [y, m] = str.split("-").map(Number);
+        if (isNaN(y) || isNaN(m)) return fallback;
+        return y * 12 + (m - 1);
+    };
+    const formatYm = (val) => {
+        const y = Math.floor(val / 12);
+        const m = (val % 12) + 1;
+        return `${y}-${String(m).padStart(2, "0")}`;
+    };
+    const formatDisplay = (val) => {
+        const y = Math.floor(val / 12);
+        const m = (val % 12) + 1;
+        return `${String(m).padStart(2, "0")}/${String(y).slice(-2)}`;
+    };
+
+    const minVal = parseYm(minDateStr, 2018 * 12);
+    const maxVal = parseYm(maxDateStr, 2026 * 12 + 6);
+    
+    const [startVal, setStartVal] = useState(() => currentDe ? parseYm(currentDe, minVal) : minVal);
+    const [endVal, setEndVal] = useState(() => currentAte ? parseYm(currentAte, maxVal) : maxVal);
+
+    useEffect(() => {
+        setStartVal(currentDe ? parseYm(currentDe, minVal) : minVal);
+        setEndVal(currentAte ? parseYm(currentAte, maxVal) : maxVal);
+    }, [currentDe, currentAte, minVal, maxVal]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            const newDe = startVal <= minVal && endVal >= maxVal ? "" : formatYm(startVal);
+            const newAte = startVal <= minVal && endVal >= maxVal ? "" : formatYm(endVal);
+            if (newDe !== (currentDe || "") || newAte !== (currentAte || "")) {
+                onChange(newDe, newAte);
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [startVal, endVal, minVal, maxVal, currentDe, currentAte, onChange]);
+
+    const handleStartChange = (e) => {
+        const val = Math.min(Number(e.target.value), endVal);
+        setStartVal(val);
+    };
+    const handleEndChange = (e) => {
+        const val = Math.max(Number(e.target.value), startVal);
+        setEndVal(val);
+    };
+
+    const leftPercent = Math.max(0, Math.min(100, ((startVal - minVal) / (maxVal - minVal || 1)) * 100));
+    const rightPercent = Math.max(0, Math.min(100, ((endVal - minVal) / (maxVal - minVal || 1)) * 100));
+
+    return (
+        <div className={className || "flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/90 border border-slate-700/80 px-4 py-2.5 rounded-xl shadow-inner w-full mb-3"}>
+            <div className="flex items-center space-x-1.5 text-xs font-mono text-slate-300 whitespace-nowrap shrink-0">
+                <span className="text-indigo-400 font-bold flex items-center gap-1"><Icons.Filter /> Faixa:</span>
+                <span className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 text-[11px] font-semibold text-emerald-300">{formatDisplay(startVal)}</span>
+                <span className="text-slate-500">-</span>
+                <span className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 text-[11px] font-semibold text-emerald-300">{formatDisplay(endVal)}</span>
+            </div>
+            <div className="relative w-full h-6 flex items-center min-w-[120px] px-2 flex-1">
+                <div className="absolute left-2 right-2 h-2 bg-slate-800 rounded-full"></div>
+                <div 
+                    className="absolute h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 rounded-full transition-all duration-75"
+                    style={{ left: `calc(${leftPercent}% + 8px - ${leftPercent * 0.16}px)`, width: `calc(${rightPercent - leftPercent}% - ${(rightPercent - leftPercent) * 0.16}px)` }}
+                ></div>
+                <input
+                    type="range"
+                    min={minVal}
+                    max={maxVal}
+                    value={startVal}
+                    onChange={handleStartChange}
+                    className="absolute w-full h-6 appearance-none bg-transparent pointer-events-none cursor-pointer [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:shadow-md hover:[&::-webkit-slider-thumb]:scale-110 transition-transform"
+                />
+                <input
+                    type="range"
+                    min={minVal}
+                    max={maxVal}
+                    value={endVal}
+                    onChange={handleEndChange}
+                    className="absolute w-full h-6 appearance-none bg-transparent pointer-events-none cursor-pointer [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-400 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:shadow-md hover:[&::-webkit-slider-thumb]:scale-110 transition-transform"
+                />
+            </div>
+            {(currentDe || currentAte) && (
+                <button 
+                    onClick={() => onChange("", "")}
+                    title="Limpar faixa de datas (voltar para seletor de Ano)"
+                    className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded text-[11px] font-mono whitespace-nowrap transition-colors flex items-center gap-1 border border-slate-700 shrink-0"
+                >
+                    <Icons.RefreshCw /> <span>Reset</span>
+                </button>
+            )}
+        </div>
+    );
+};
 
 // Slide-over Drawer (Dossiê Executivo da Mesa)
 const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalItems, currentIndex, onUpdateOffer }) => {
@@ -290,6 +403,19 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 </span>
                             </div>
                         </div>
+
+                        {/* Botão de Deep-Link Oficial para SRE CVM */}
+                        <div className="pt-2">
+                            <a
+                                href={offer.Link_CVM_SRE || (offer.Numero_Requerimento || offer.Id_Processo ? `https://web.cvm.gov.br/app/sre-publico/#/oferta-publica/${offer.Numero_Requerimento || offer.Id_Processo}` : "#")}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/25 border border-indigo-400/30 w-full"
+                            >
+                                <Icons.ExternalLink className="w-4 h-4 shrink-0" />
+                                <span>Ver Oferta Completa no SRE (CVM) ↗</span>
+                            </a>
+                        </div>
                     </div>
 
                     {/* Características do Valor Mobiliário (API REST Oficial CVM) */}
@@ -311,75 +437,102 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         </div>
                     )}
 
-                    {/* Investor Demography Table (Official vs Imputed check) */}
-                    <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Alocação por Demografia (R$ Real e Share)</h4>
-                            {offer.Alocacao_Pendente ? (
-                                <span className="text-xs text-amber-400 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 inline-flex items-center">
-                                    <Icons.Clock className="w-3.5 h-3.5 mr-1 inline" /> Alocação Pendente (Bookbuilding)
-                                </span>
-                            ) : (
-                                <span className="text-xs text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 inline-flex items-center">
-                                    <Icons.CheckCircle className="w-3.5 h-3.5 mr-1 inline" /> 100% Confirmada CVM
-                                </span>
-                            )}
-                        </div>
+                    {/* Investor Demography Table (Official CVM Resolução 160: Dados de Colocação) */}
+                    {(() => {
+                        const demogList = (offer.Demografia_Detalhada && offer.Demografia_Detalhada.length > 0) ? offer.Demografia_Detalhada : [
+                            { categoria: "Pessoas naturais", investidores: offer.Qtd_Inv_Pessoa_Fisica || 0, qtde_vm: 0, vol_alocado: offer.Vol_Pessoa_Fisica || 0 },
+                            { categoria: "Clubes de investimento", investidores: 0, qtde_vm: 0, vol_alocado: 0 },
+                            { categoria: "Fundos de investimento", investidores: offer.Qtd_Inv_Fundos || 0, qtde_vm: 0, vol_alocado: offer.Vol_Fundos || 0 },
+                            { categoria: "Entidades de previdência privada", investidores: offer.Qtd_Inv_Previdencia || 0, qtde_vm: 0, vol_alocado: offer.Vol_Previdencia || 0 },
+                            { categoria: "Companhias seguradoras", investidores: offer.Qtd_Inv_Seguradoras || 0, qtde_vm: 0, vol_alocado: offer.Vol_Seguradoras || 0 },
+                            { categoria: "Investidores estrangeiros", investidores: offer.Qtd_Inv_Estrangeiro || 0, qtde_vm: 0, vol_alocado: offer.Vol_Estrangeiro || 0 },
+                            { categoria: "Instituições Intermediárias participantes do consórcio de distribuição", investidores: 0, qtde_vm: 0, vol_alocado: 0 },
+                            { categoria: "Instituições financeiras ligadas ao emissor e aos participantes do consórcio", investidores: 0, qtde_vm: 0, vol_alocado: 0 },
+                            { categoria: "Demais instituições financeiras", investidores: offer.Qtd_Inv_Instituicoes || 0, qtde_vm: 0, vol_alocado: offer.Vol_Instituicoes || 0 },
+                            { categoria: "Demais pessoas jurídicas ligadas ao emissor e aos participantes do consórcio", investidores: 0, qtde_vm: 0, vol_alocado: 0 },
+                            { categoria: "Demais pessoas jurídicas", investidores: 0, qtde_vm: 0, vol_alocado: 0 },
+                            { categoria: "Sócios, administradores, empregados, prepostos e demais pessoas ligadas ao emissor e aos participantes do consórcio", investidores: 0, qtde_vm: 0, vol_alocado: 0 }
+                        ];
 
-                        <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
-                            <table className="w-full text-left text-xs">
-                                <thead className="bg-slate-950 text-slate-400 uppercase font-mono text-[11px] border-b border-slate-800">
-                                    <tr>
-                                        <th className="p-3">Segmento do Investidor</th>
-                                        <th className="p-3 text-right">Volume Alocado (R$)</th>
-                                        <th className="p-3 text-right">Share (%)</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                                    <tr>
-                                        <td className="p-3 font-medium flex items-center space-x-2">
-                                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                                            <span>Pessoas Físicas (Varejo / Qualificado)</span>
-                                        </td>
-                                        <td className="p-3 text-right font-mono">{formatCurrency(offer.Vol_Pessoa_Fisica)}</td>
-                                        <td className="p-3 text-right font-mono text-emerald-400">
-                                            {offer.Volume_Float > 0 ? `${((offer.Vol_Pessoa_Fisica / offer.Volume_Float) * 100).toFixed(1)}%` : "0,0%"}
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td className="p-3 font-medium flex items-center space-x-2">
-                                            <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
-                                            <span>Fundos de Investimento</span>
-                                        </td>
-                                        <td className="p-3 text-right font-mono">{formatCurrency(offer.Vol_Fundos)}</td>
-                                        <td className="p-3 text-right font-mono text-indigo-400">
-                                            {offer.Volume_Float > 0 ? `${((offer.Vol_Fundos / offer.Volume_Float) * 100).toFixed(1)}%` : "0,0%"}
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td className="p-3 font-medium flex items-center space-x-2">
-                                            <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-                                            <span>Investidores Estrangeiros</span>
-                                        </td>
-                                        <td className="p-3 text-right font-mono">{formatCurrency(offer.Vol_Estrangeiro)}</td>
-                                        <td className="p-3 text-right font-mono text-blue-400">
-                                            {offer.Volume_Float > 0 ? `${((offer.Vol_Estrangeiro / offer.Volume_Float) * 100).toFixed(1)}%` : "0,0%"}
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td className="p-3 font-medium flex items-center space-x-2">
-                                            <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-                                            <span>Entidades de Previdência / Outros Institucionais</span>
-                                        </td>
-                                        <td className="p-3 text-right font-mono">{formatCurrency(offer.Vol_Previdencia)}</td>
-                                        <td className="p-3 text-right font-mono text-purple-400">
-                                            {offer.Volume_Float > 0 ? `${((offer.Vol_Previdencia / offer.Volume_Float) * 100).toFixed(1)}%` : "0,0%"}
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                        const totalInv = demogList.reduce((acc, curr) => acc + (Number(curr.investidores) || 0), 0);
+                        const totalQtde = demogList.reduce((acc, curr) => acc + (Number(curr.qtde_vm) || 0), 0);
+                        const totalVol = demogList.reduce((acc, curr) => acc + (Number(curr.vol_alocado) || 0), 0);
+                        const baseFloat = offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : (totalVol > 0 ? totalVol : 1);
+
+                        return (
+                            <div className="space-y-3">
+                                <div className="bg-slate-900/95 rounded-xl border border-slate-700/80 shadow-xl overflow-hidden">
+                                    <div className="bg-gradient-to-r from-[#002850] via-slate-900 to-slate-900 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
+                                        <div>
+                                            <h4 className="text-sm font-bold text-blue-300 tracking-wide font-display flex items-center gap-2">
+                                                <Icons.BarChart2 className="w-4 h-4 text-blue-400" />
+                                                Dados de Colocação
+                                            </h4>
+                                            <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+                                                Data Encerramento: {offer.Data_Encerramento || offer.Data_Registro || offer.Data_Clean || "Em andamento"}
+                                            </span>
+                                        </div>
+                                        {offer.Alocacao_Pendente ? (
+                                            <span className="text-xs text-amber-400 font-mono bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/20 inline-flex items-center shadow-sm">
+                                                <Icons.Clock className="w-3.5 h-3.5 mr-1.5 inline shrink-0" /> Alocação Pendente (Bookbuilding)
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs text-emerald-400 font-mono bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 inline-flex items-center shadow-sm">
+                                                <Icons.CheckCircle className="w-3.5 h-3.5 mr-1.5 inline shrink-0" /> 100% Confirmada CVM
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-xs">
+                                            <thead className="bg-[#003366] text-white uppercase font-mono text-[11px] border-b border-blue-800">
+                                                <tr>
+                                                    <th className="py-3 px-4 font-bold border-r border-blue-800/60 min-w-[260px]">Segmento / Categoria do Investidor</th>
+                                                    <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 bg-[#002850] min-w-[120px]">Número de Investidores</th>
+                                                    <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 min-w-[160px]">Quantidade de Valores Mobiliários</th>
+                                                    <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 bg-[#002850] min-w-[140px] text-blue-200">Volume Alocado (R$)</th>
+                                                    <th className="py-3 px-4 text-right font-bold min-w-[85px] text-blue-200">Share (%)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                                                {demogList.map((row, idx) => {
+                                                    const sharePct = ((row.vol_alocado || 0) / baseFloat) * 100;
+                                                    return (
+                                                        <tr key={idx} className="odd:bg-slate-950/60 even:bg-slate-900/30 hover:bg-slate-800/60 transition-colors">
+                                                            <td className="py-2.5 px-4 font-medium text-slate-200 border-r border-slate-800/60 leading-snug">
+                                                                {row.categoria}
+                                                            </td>
+                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-slate-300 bg-slate-900/30">
+                                                                {Number(row.investidores || 0).toLocaleString("pt-BR")}
+                                                            </td>
+                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-blue-300 font-semibold">
+                                                                {Number(row.qtde_vm || 0).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+                                                            </td>
+                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-emerald-400 bg-slate-900/30">
+                                                                {formatCurrency(row.vol_alocado || 0)}
+                                                            </td>
+                                                            <td className="py-2.5 px-4 text-right font-mono text-slate-400 font-semibold">
+                                                                {sharePct.toFixed(2)}%
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                            <tfoot className="bg-[#002040] text-white font-mono text-xs border-t-2 border-blue-500 font-semibold">
+                                                <tr>
+                                                    <td className="py-3 px-4 uppercase tracking-wider border-r border-blue-900">Total da Oferta / Colocação</td>
+                                                    <td className="py-3 px-4 text-right border-r border-blue-900 text-amber-300">{totalInv.toLocaleString("pt-BR")}</td>
+                                                    <td className="py-3 px-4 text-right border-r border-blue-900 text-blue-200">{totalQtde.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</td>
+                                                    <td className="py-3 px-4 text-right border-r border-blue-900 text-emerald-300">{formatCurrency(offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : totalVol)}</td>
+                                                    <td className="py-3 px-4 text-right text-white">100,00%</td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* Institutional & Legal Metadata */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-900/40 rounded-xl border border-slate-800 text-xs">
@@ -392,8 +545,8 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             <span className="font-mono text-slate-300 mt-0.5 block">{formatDate(offer.Data_Clean)}</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Coordenador Líder</span>
-                            <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Lider}>{offer.Lider}</span>
+                            <span className="text-slate-500 block">Coordenador / Consórcio</span>
+                            <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>{offer.Consorcio || offer.Lider}</span>
                         </div>
                         <div>
                             <span className="text-slate-500 block">Processo SEI / Rito</span>
@@ -431,20 +584,24 @@ const App = () => {
     
     const [status, setStatus] = useState({ status: "loading", rows_count: 0, last_update: "Conectando..." });
     const [filters, setFilters] = useState({
-        ano: getInitialUrlParams().get("ano") || "Recentes (2023-2026)",
+        ano: getInitialUrlParams().get("ano") || "Todos",
         rito: getInitialUrlParams().get("rito") || "Todos",
         ativo: getInitialUrlParams().get("ativo") || "Todos",
         status: getInitialUrlParams().get("status") || "Todos",
         indexador: getInitialUrlParams().get("indexador") || "Todos",
         publico: getInitialUrlParams().get("publico") || "Todos",
         regime: getInitialUrlParams().get("regime") || "Todos",
-        incluir_estimados: getInitialUrlParams().get("incluir_estimados") === "true" || false
+        incluir_estimados: getInitialUrlParams().get("incluir_estimados") === "true" || false,
+        data_de: getInitialUrlParams().get("data_de") || "2023-01",
+        data_ate: getInitialUrlParams().get("data_ate") || ""
     });
 
     const [searchQuery, setSearchQuery] = useState(getInitialUrlParams().get("busca") || "");
     const [pageSize, setPageSize] = useState(25);
     const [currentPage, setCurrentPage] = useState(parseInt(getInitialUrlParams().get("page") || "1", 10));
     const [activeTab, setActiveTab] = useState("explorer");
+    const [showAllLeaders, setShowAllLeaders] = useState(false);
+    const [showAllIssuers, setShowAllIssuers] = useState(false);
     
     const [kpis, setKpis] = useState(null);
     const [overviewCharts, setOverviewCharts] = useState(null);
@@ -453,8 +610,34 @@ const App = () => {
     const [offersData, setOffersData] = useState({ items: [], total: 0, page: 1, total_pages: 1 });
     const [selectedOffer, setSelectedOffer] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [backendReady, setBackendReady] = useState(false);
+    const [loadingMsg, setLoadingMsg] = useState("Inicializando servidor...");
     const [sortBy, setSortBy] = useState(getInitialUrlParams().get("sort_by") || "Data_Clean");
     const [sortOrder, setSortOrder] = useState(getInitialUrlParams().get("sort_order") || "desc");
+
+    // Poll /api/ready until backend has finished loading data
+    useEffect(() => {
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const r = await fetch(API_BASE + "/ready");
+                if (!r.ok) throw new Error("not ok");
+                const d = await r.json();
+                if (d.ready) {
+                    if (!cancelled) setBackendReady(true);
+                    return;
+                }
+                if (!cancelled) {
+                    setLoadingMsg(d.message || "Carregando dados CVM...");
+                    setTimeout(poll, 3000);
+                }
+            } catch {
+                if (!cancelled) setTimeout(poll, 4000);
+            }
+        };
+        poll();
+        return () => { cancelled = true; };
+    }, []);
 
     // Fetch System Status
     useEffect(() => {
@@ -476,6 +659,8 @@ const App = () => {
         if (filters.publico !== "Todos") params.set("publico", filters.publico);
         if (filters.regime !== "Todos") params.set("regime", filters.regime);
         if (filters.incluir_estimados) params.set("incluir_estimados", "true");
+        if (filters.data_de) params.set("data_de", filters.data_de);
+        if (filters.data_ate) params.set("data_ate", filters.data_ate);
         if (sortBy !== "Data_Clean") params.set("sort_by", sortBy);
         if (sortOrder !== "desc") params.set("sort_order", sortOrder);
         if (currentPage !== 1) params.set("page", currentPage);
@@ -504,7 +689,9 @@ const App = () => {
                 page: currentPage,
                 page_size: pageSize,
                 sort_by: sortBy,
-                sort_order: sortOrder
+                sort_order: sortOrder,
+                ...(filters.data_de && { data_de: filters.data_de }),
+                ...(filters.data_ate && { data_ate: filters.data_ate })
             }).toString();
 
             fetch(`${API_BASE}/kpis?${queryParams}`, { signal })
@@ -574,14 +761,16 @@ const App = () => {
 
     const handleClearFilters = () => {
         setFilters({
-            ano: "Recentes (2023-2026)",
+            ano: "Todos",
             rito: "Todos",
             ativo: "Todos",
             status: "Todos",
             indexador: "Todos",
             publico: "Todos",
             regime: "Todos",
-            incluir_estimados: false
+            incluir_estimados: false,
+            data_de: "2023-01",
+            data_ate: ""
         });
         setSearchQuery("");
         setCurrentPage(1);
@@ -607,7 +796,9 @@ const App = () => {
             indexador: filters.indexador,
             publico: filters.publico,
             regime: filters.regime,
-            busca: searchQuery
+            busca: searchQuery,
+            ...(filters.data_de && { data_de: filters.data_de }),
+            ...(filters.data_ate && { data_ate: filters.data_ate })
         }).toString();
         window.open(`${API_BASE}/export?${queryParams}`, "_blank");
     };
@@ -628,6 +819,34 @@ const App = () => {
         if (idx === "PRÉ (Prefixado)") return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
         return "bg-slate-800 text-slate-300 border-slate-700";
     };
+
+    // Loading screen while backend is initializing data
+    if (!backendReady) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center bg-[#080e1a]" style={{background: 'radial-gradient(ellipse at 60% 20%, #0d1f3c 0%, #080e1a 70%)'}}>
+                <div className="flex flex-col items-center gap-8 max-w-md text-center px-6">
+                    <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center shadow-2xl shadow-indigo-500/40 animate-pulse">
+                        <Icons.TrendingUp className="w-10 h-10 text-white" />
+                    </div>
+                    <div>
+                        <h1 className="text-3xl font-extrabold text-white font-display tracking-tight mb-2">CVM Primários Monitor PRO</h1>
+                        <p className="text-slate-400 text-sm">Plataforma de Auditoria de Emissões Primárias</p>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-indigo-500 via-blue-400 to-indigo-500 rounded-full animate-pulse" style={{width:'60%'}}></div>
+                    </div>
+                    <div className="flex items-center gap-3 text-slate-300 text-sm">
+                        <svg className="animate-spin w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                        </svg>
+                        <span className="font-mono text-xs text-slate-300">{loadingMsg}</span>
+                    </div>
+                    <p className="text-xs text-slate-500">Fazendo download da base de dados oficial CVM e processando ofertas primárias. Isso pode levar até 60 segundos na primeira inicialização.</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen flex flex-col">
@@ -702,76 +921,84 @@ const App = () => {
                 </div>
             </header>
 
-            {/* Sticky Quick-Access Multi-Selection Chips Row */}
-            <div className="sticky top-[73px] z-30 glass-header px-6 py-2.5 border-b border-slate-800/80 shadow-md">
-                <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs">
-                    {/* Instrumentos (Ativos) Multi-Select Chips */}
-                    <div className="flex flex-wrap items-center gap-1.5 flex-1">
-                        <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold mr-1 flex items-center">
-                            <Icons.Filter /> <span className="ml-1">Ativo:</span>
-                        </span>
-                        {["Todos", "Debêntures", "CRI", "CRA", "FII", "Nota Comercial", "Ações", "FIDC"].map(item => {
-                            const isAll = item === "Todos";
-                            const currentArr = (filters.ativo || "Todos").split(",").map(s => s.trim());
-                            const isSelected = isAll ? (filters.ativo === "Todos" || !filters.ativo) : currentArr.includes(item);
-                            const label = isAll ? "Todos" : item;
-                            return (
-                                <button
-                                    key={item}
-                                    onClick={() => toggleMultiSelectFilter("ativo", item)}
-                                    className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
-                                        isSelected
-                                            ? "bg-indigo-600/25 text-indigo-300 border-indigo-500 shadow-sm"
-                                            : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
-                                    }`}>
-                                    <span>{label}</span>
-                                    {isSelected && !isAll && <span className="text-indigo-400 font-bold ml-1">•</span>}
-                                </button>
-                            );
-                        })}
+            {/* Sticky Quick-Access Multi-Selection Chips Row with Date Range Slider */}
+            {/* Sticky Quick-Access Multi-Selection Chips Row with Date Range Slider */}
+            <div className="sticky top-[73px] z-30 glass-header px-4 lg:px-6 py-2 border-b border-slate-800/80 shadow-md">
+                <div className="max-w-7xl mx-auto flex flex-col 2xl:flex-row items-stretch 2xl:items-center justify-between gap-2.5 text-xs">
+                    {/* Top Tier (or Left on 2xl): Ativo Chips & Indexador Chips */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 w-full 2xl:w-auto">
+                        {/* Instrumentos (Ativos) Multi-Select Chips */}
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                            <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold mr-1 flex items-center">
+                                <Icons.Filter /> <span className="ml-1">Ativo:</span>
+                            </span>
+                            {[
+                                { label: "Todos", value: "Todos" },
+                                { label: "DEB", value: "Debêntures" },
+                                { label: "CRI", value: "CRI" },
+                                { label: "CRA", value: "CRA" },
+                                { label: "NC", value: "Nota Comercial" },
+                                { label: "CPR", value: "CPR" }
+                            ].map(item => {
+                                const isAll = item.value === "Todos";
+                                const currentArr = (filters.ativo || "Todos").split(",").map(s => s.trim());
+                                const isSelected = isAll ? (filters.ativo === "Todos" || !filters.ativo) : currentArr.includes(item.value);
+                                return (
+                                    <button
+                                        key={item.value}
+                                        onClick={() => toggleMultiSelectFilter("ativo", item.value)}
+                                        className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
+                                            isSelected
+                                                ? "bg-indigo-600/25 text-indigo-300 border-indigo-500 shadow-sm"
+                                                : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
+                                        }`}>
+                                        <span>{item.label}</span>
+                                        {isSelected && !isAll && <span className="text-indigo-400 font-bold ml-1">•</span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* Indexadores */}
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                            <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold mr-1">
+                                Indexador:
+                            </span>
+                            {["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)"].map(item => {
+                                const isAll = item === "Todos";
+                                const currentArr = (filters.indexador || "Todos").split(",").map(s => s.trim());
+                                const isSelected = isAll ? (filters.indexador === "Todos" || !filters.indexador) : currentArr.includes(item);
+                                const label = isAll ? "Todos" : (item === "PRÉ (Prefixado)" ? "PRÉ" : item.split(" ")[0]);
+                                return (
+                                    <button
+                                        key={item}
+                                        onClick={() => toggleMultiSelectFilter("indexador", item)}
+                                        className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
+                                            isSelected
+                                                ? getIndexerColorClass(item) + " font-semibold shadow-sm"
+                                                : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
+                                        }`}>
+                                        <span>{label}</span>
+                                        {isSelected && !isAll && <span className="font-bold ml-1">•</span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
 
-                    {/* Indexadores & Estimated Toggle */}
-                    <div className="flex flex-wrap items-center gap-1.5 border-t lg:border-t-0 pt-2 lg:pt-0 border-slate-800/60 w-full lg:w-auto justify-start lg:justify-end">
-                        <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold mr-1">
-                            Indexador:
-                        </span>
-                        {["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)"].map(item => {
-                            const isAll = item === "Todos";
-                            const currentArr = (filters.indexador || "Todos").split(",").map(s => s.trim());
-                            const isSelected = isAll ? (filters.indexador === "Todos" || !filters.indexador) : currentArr.includes(item);
-                            const label = isAll ? "Todos" : (item === "PRÉ (Prefixado)" ? "PRÉ" : item.split(" ")[0]);
-                            return (
-                                <button
-                                    key={item}
-                                    onClick={() => toggleMultiSelectFilter("indexador", item)}
-                                    className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
-                                        isSelected
-                                            ? getIndexerColorClass(item) + " font-semibold shadow-sm"
-                                            : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
-                                    }`}>
-                                    <span>{label}</span>
-                                    {isSelected && !isAll && <span className="font-bold ml-1">•</span>}
-                                </button>
-                            );
-                        })}
-
-                        <div className="h-4 w-px bg-slate-800 mx-1.5 hidden sm:block"></div>
-
-                        {/* Estimated Volume Toggle */}
-                        <button
-                            onClick={() => handleFilterChange("incluir_estimados", !filters.incluir_estimados)}
-                            title="Quando ativado, inclui volumes alvo de bookbuilding ainda em formação nos KPIs e rankings."
-                            className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
-                                filters.incluir_estimados
-                                    ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
-                                    : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200"
-                            }`}>
-                            <span>Estimados:</span>
-                            <strong className={filters.incluir_estimados ? "text-purple-300 font-bold" : "text-slate-500"}>
-                                {filters.incluir_estimados ? "INCLUÍDOS" : "EXCLUÍDOS"}
-                            </strong>
-                        </button>
+                    {/* Bottom Tier (or Center on 2xl): Date Range Slider */}
+                    <div className="w-full 2xl:w-auto 2xl:flex-1 2xl:max-w-lg 2xl:mx-3 min-w-0">
+                        <DateRangeSlider 
+                            minDateStr={status.data_min || "2018-01"} 
+                            maxDateStr={status.data_max || "2026-07"} 
+                            currentDe={filters.data_de} 
+                            currentAte={filters.data_ate} 
+                            onChange={(de, ate) => {
+                                setFilters(prev => ({ ...prev, data_de: de, data_ate: ate, ano: (de || ate) ? "Todos" : prev.ano }));
+                                setCurrentPage(1);
+                            }} 
+                            className="flex items-center justify-between gap-2.5 bg-slate-900/95 border border-slate-700/80 px-3 py-1 rounded-lg shadow-inner w-full overflow-hidden"
+                        />
                     </div>
                 </div>
             </div>
@@ -877,53 +1104,7 @@ const App = () => {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                        <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Ano / Período</label>
-                            <select
-                                value={filters.ano}
-                                onChange={(e) => handleFilterChange("ano", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono">
-                                <option value="Recentes (2023-2026)">Recentes (2023-2026)</option>
-                                <option value="Todos">Todos os Anos</option>
-                                <option value="2026">2026</option>
-                                <option value="2025">2025</option>
-                                <option value="2024">2024</option>
-                                <option value="2023">2023</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Ativo Mobiliário</label>
-                            <select
-                                value={filters.ativo}
-                                onChange={(e) => handleFilterChange("ativo", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-                                <option value="Todos">Todos os Ativos</option>
-                                <option value="Debêntures">Debêntures</option>
-                                <option value="CRI,CRA">CRI & CRA (Securitização)</option>
-                                <option value="CRI">CRI - Cert. Recebíveis Imob.</option>
-                                <option value="CRA">CRA - Cert. Recebíveis Agron.</option>
-                                <option value="FII">FII - Fundos Imobiliários</option>
-                                <option value="Nota Comercial">Notas Comerciais</option>
-                                <option value="Ações">Ações / Units</option>
-                                <option value="FIDC">FIDC - Direitos Creditórios</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Indexador / Juros</label>
-                            <select
-                                value={filters.indexador}
-                                onChange={(e) => handleFilterChange("indexador", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-                                <option value="Todos">Todos os Indexadores</option>
-                                <option value="CDI / DI">CDI / DI (Índigo)</option>
-                                <option value="IPCA / Inflação">IPCA / Inflação (Âmbar)</option>
-                                <option value="PRÉ (Prefixado)">PRÉ Prefixado (Esmeralda)</option>
-                            </select>
-                        </div>
-
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
                             <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Status na CVM</label>
                             <select
@@ -961,6 +1142,23 @@ const App = () => {
                                 <option value="ICVM 400">ICVM 400 (Antigo Varejo)</option>
                                 <option value="ICVM 476">ICVM 476 (Antigo Restrito)</option>
                             </select>
+                        </div>
+
+                        <div>
+                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Volumes Alvo Estimados</label>
+                            <button
+                                onClick={() => handleFilterChange("incluir_estimados", !filters.incluir_estimados)}
+                                title="Quando ativado, inclui volumes alvo de bookbuilding ainda em formação nos KPIs e rankings."
+                                className={`w-full py-1.5 px-3 rounded-lg font-mono text-xs font-medium transition-all flex items-center justify-between border ${
+                                    filters.incluir_estimados
+                                        ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
+                                        : "bg-slate-900 text-slate-400 border-slate-700 hover:text-slate-200"
+                                }`}>
+                                <span>Bookbuilding Estimado:</span>
+                                <strong className={filters.incluir_estimados ? "text-purple-300 font-bold" : "text-slate-500"}>
+                                    {filters.incluir_estimados ? "INCLUÍDO" : "EXCLUÍDO"}
+                                </strong>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1006,6 +1204,9 @@ const App = () => {
                                             <th className="p-3.5">Ativo / Tipo</th>
                                             <th className="p-3.5">Indexador</th>
                                             <th className="p-3.5">Remuneração (Spread/Juros)</th>
+                                            <th className="p-3.5 cursor-pointer hover:text-white" onClick={() => handleSort("Status")}>
+                                                Status CVM {sortBy === "Status" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
+                                            </th>
                                             <th className="p-3.5 text-right cursor-pointer hover:text-white" onClick={() => handleSort("Volume_Float")}>
                                                 Volume Registrado {sortBy === "Volume_Float" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
@@ -1024,7 +1225,7 @@ const App = () => {
                                                     <td className="p-3.5 font-mono text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
                                                     <td className="p-3.5 font-semibold text-white max-w-[240px] truncate" title={r.Emissor}>
                                                         {r.Emissor}
-                                                        <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate">{r.Lider}</span>
+                                                        <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate" title={r.Consorcio || r.Lider}>{r.Consorcio || r.Lider}</span>
                                                     </td>
                                                     <td className="p-3.5">
                                                         <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80 font-mono text-[11px]">
@@ -1044,6 +1245,17 @@ const App = () => {
                                                                 <Icons.Clock className="w-3 h-3 inline mr-1 shrink-0" /> {r.Taxa_Juros?.replace(" (Bookbuilding)", "") || "Alvo (Bookbuilding)"}
                                                             </span>
                                                         )}
+                                                    </td>
+                                                    <td className="p-3.5 whitespace-nowrap">
+                                                        <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-medium border ${
+                                                            r.Status?.includes("Encerrada") || r.Status?.includes("Dispensada") || r.Status?.includes("Concedido") || r.Status?.includes("Confirmada")
+                                                                ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                                                                : r.Status?.includes("Análise") || r.Status?.includes("Exigência") || r.Status?.includes("Pendente")
+                                                                ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                                : "bg-slate-800 text-slate-300 border-slate-700"
+                                                        }`} title={r.Status}>
+                                                            {r.Status || "-"}
+                                                        </span>
                                                     </td>
                                                     <td className="p-3.5 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
                                                         {formatCurrency(r.Volume_Float)}
@@ -1072,7 +1284,7 @@ const App = () => {
                                         })}
                                         {!offersData.items.length && (
                                             <tr>
-                                                <td colSpan={9} className="p-12 text-center text-slate-400">
+                                                <td colSpan={10} className="p-12 text-center text-slate-400">
                                                     <div className="max-w-md mx-auto">
                                                         <p className="text-base font-semibold text-slate-300 mb-1">Nenhuma oferta carregada ou conexão pendente na porta 8000</p>
                                                         <p className="text-xs text-slate-500">Certifique-se de que o backend Python (`python main.py` no terminal do backend) está ativo na porta 8000.</p>
@@ -1126,16 +1338,16 @@ const App = () => {
                         </div>
                     ) : (
                         <div className="space-y-6">
-                            {/* 1. Vencimento X Spread */}
-                        {overviewCharts.vencimento_spread && (
+                            {/* 1. Vencimento X Spread — Scatter/Bubble */}
+                        {overviewCharts.vencimento_spread && (overviewCharts.vencimento_spread.cdi_points?.length > 0 || overviewCharts.vencimento_spread.ipca_points?.length > 0) && (
                             <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 bg-gradient-to-br from-slate-900/90 to-slate-900/40">
                                 <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
                                     <div>
                                         <h3 className="text-base font-bold text-white font-display flex items-center gap-2">
                                             <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
-                                            Vencimento X Spread (% a.a.)
+                                            Vencimento &times; Spread (% a.a.)
                                         </h3>
-                                        <p className="text-xs text-slate-400">Correlação entre o ano de vencimento dos títulos e o spread médio indicativo (CDI+ e IPCA+)</p>
+                                        <p className="text-xs text-slate-400">Dispersão real: cada bolha é uma emissão, tamanho proporcional ao volume. Clique em um ponto para abrir o dossiê.</p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">
                                         <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500 border border-indigo-300 inline-block"></span><span>CDI+ (% a.a.)</span></span>
@@ -1143,267 +1355,402 @@ const App = () => {
                                     </div>
                                 </div>
                                 <ChartWrapper
+                                    type="bubble"
+                                    height={380}
+                                    onClick={(pointData) => {
+                                        if (pointData && pointData.id) {
+                                            const found = (offersData.items || []).find(o => String(o.Id_Processo) === String(pointData.id) || String(o.Numero_Requerimento) === String(pointData.id));
+                                            if (found) {
+                                                setSelectedOffer(found);
+                                            } else {
+                                                setSelectedOffer({
+                                                    Id_Processo: pointData.id,
+                                                    Emissor: pointData.emissor || "",
+                                                    Taxa_Juros: pointData.taxa || "",
+                                                    Volume_Float: pointData.volume || 0,
+                                                    Vencimento: pointData.vencimento || "",
+                                                    Ativo: pointData.instrumento || "",
+                                                    Lider: pointData.coordenador || "",
+                                                });
+                                            }
+                                            const targetUrl = `${API_BASE_URL || ""}/api/offers/${pointData.id}`;
+                                            fetch(targetUrl)
+                                                .then(res => res.ok ? res.json() : null)
+                                                .then(fullData => {
+                                                    if (fullData && fullData.Id_Processo) {
+                                                        setSelectedOffer(fullData);
+                                                    }
+                                                })
+                                                .catch(() => {});
+                                        }
+                                    }}
+                                    data={(() => {
+                                        const idxVal = (filters.indexador || "Todos").toUpperCase();
+                                        const idxArr = (filters.indexador || "Todos").toUpperCase().split(",").map(s => s.trim());
+                                        const isAllIdx = idxArr.includes("TODOS") || idxArr.includes("TODOS OS INDEXADORES") || idxArr.length === 0;
+                                        const showCdi = isAllIdx || idxArr.some(x => x.includes("CDI") || (x.includes("DI") && !x.includes("INFLA") && !x.includes("ORDIN")));
+                                        const showIpca = isAllIdx || idxArr.some(x => x.includes("IPCA") || x.includes("INFLA"));
+                                        return {
+                                            datasets: [
+                                                ...(showCdi ? [{
+                                                    label: "CDI+ Spread (% a.a.)",
+                                                    data: (overviewCharts.vencimento_spread.cdi_points || []).map(p => ({
+                                                        ...p,
+                                                        r: p.r || Math.min(Math.max(Math.sqrt((p.volume || 0) / 1e6) / 3, 3), 16)
+                                                    })),
+                                                    backgroundColor: "rgba(99, 102, 241, 0.65)",
+                                                    borderColor: "#C7D2FE",
+                                                    borderWidth: 1.5,
+                                                    hoverBackgroundColor: "rgba(99, 102, 241, 0.9)",
+                                                    hoverBorderWidth: 2
+                                                }] : []),
+                                                ...(showIpca ? [{
+                                                    label: "IPCA+ Spread (% a.a.)",
+                                                    data: (overviewCharts.vencimento_spread.ipca_points || []).map(p => ({
+                                                        ...p,
+                                                        r: p.r || Math.min(Math.max(Math.sqrt((p.volume || 0) / 1e6) / 3, 3), 16)
+                                                    })),
+                                                    backgroundColor: "rgba(245, 158, 11, 0.65)",
+                                                    borderColor: "#FDE68A",
+                                                    borderWidth: 1.5,
+                                                    hoverBackgroundColor: "rgba(245, 158, 11, 0.9)",
+                                                    hoverBorderWidth: 2
+                                                }] : []),
+                                                ...(showCdi && overviewCharts.vencimento_spread.labels?.length > 0 ? [{
+                                                    label: "Mediana CDI+",
+                                                    type: "line",
+                                                    data: overviewCharts.vencimento_spread.labels.map((yr, i) => ({
+                                                        x: parseInt(yr),
+                                                        y: overviewCharts.vencimento_spread.cdi_median?.[i]
+                                                    })).filter(p => p.y != null),
+                                                    borderColor: "rgba(99, 102, 241, 0.5)",
+                                                    borderWidth: 2,
+                                                    borderDash: [6, 4],
+                                                    pointRadius: 0,
+                                                    fill: false,
+                                                    tension: 0.3
+                                                }] : []),
+                                                ...(showIpca && overviewCharts.vencimento_spread.labels?.length > 0 ? [{
+                                                    label: "Mediana IPCA+",
+                                                    type: "line",
+                                                    data: overviewCharts.vencimento_spread.labels.map((yr, i) => ({
+                                                        x: parseInt(yr),
+                                                        y: overviewCharts.vencimento_spread.ipca_median?.[i]
+                                                    })).filter(p => p.y != null),
+                                                    borderColor: "rgba(245, 158, 11, 0.5)",
+                                                    borderWidth: 2,
+                                                    borderDash: [6, 4],
+                                                    pointRadius: 0,
+                                                    fill: false,
+                                                    tension: 0.3
+                                                }] : [])
+                                            ]
+                                        };
+                                    })()}
+                                    options={{
+                                        scales: {
+                                            x: {
+                                                type: "linear",
+                                                title: { display: true, text: "Ano de Vencimento", color: "#94A3B8", font: { family: "JetBrains Mono", size: 11 } },
+                                                grid: { color: "#1E293B" },
+                                                ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, stepSize: 1, callback: v => String(v) }
+                                            },
+                                            y: {
+                                                title: { display: true, text: "Spread (% a.a.)", color: "#94A3B8", font: { family: "JetBrains Mono", size: 11 } },
+                                                grid: { color: "#1E293B" },
+                                                ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `${v}%` }
+                                            }
+                                        },
+                                        plugins: {
+                                            legend: { display: false },
+                                            tooltip: {
+                                                callbacks: {
+                                                    label: (ctx) => {
+                                                        const p = ctx.raw;
+                                                        if (!p || !p.emissor) return ctx.dataset.label;
+                                                        return [
+                                                            `${p.emissor}`,
+                                                            `Taxa: ${p.taxa}`,
+                                                            `Vencimento: ${p.vencimento}`,
+                                                            `Volume: ${formatCurrency(p.volume)}`,
+                                                            `Coordenador: ${p.coordenador || "N/I"}`,
+                                                            `${p.instrumento || ""}${p.is_estimated ? " (Estimado)" : ""}`
+                                                        ];
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* 2. Volume Emitido Indexado por Referência NTN-B — Barras Horizontais Empilhadas */}
+                        {overviewCharts.ntnb_volume && overviewCharts.ntnb_volume.labels?.length > 0 && (
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                                    <div>
+                                        <h3 className="text-base font-bold text-white font-display flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                                            Volume Emitido Indexado por Referência NTN-B (R$ Bi)
+                                        </h3>
+                                        <p className="text-xs text-slate-400">
+                                            Distribuição por vértice NTN-B &mdash;{" "}
+                                            <span className="text-amber-400 font-semibold">{overviewCharts.ntnb_volume.cobertura || 0}% do volume IPCA classificado</span>
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center space-x-4 text-xs font-mono">
+                                        <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-3 h-3 rounded bg-amber-500 inline-block"></span><span>Declarada</span></span>
+                                        <span className="flex items-center space-x-1.5 text-amber-400/50"><span className="w-3 h-3 rounded bg-amber-500/35 inline-block border border-amber-500/50"></span><span>Aproximada</span></span>
+                                    </div>
+                                </div>
+                                <ChartWrapper
+                                    type="bar"
+                                    height={Math.max(280, (overviewCharts.ntnb_volume.labels?.length || 5) * 36)}
+                                    data={{
+                                        labels: overviewCharts.ntnb_volume.labels,
+                                        datasets: [
+                                            {
+                                                label: "Declarada (R$ Bi)",
+                                                data: (overviewCharts.ntnb_volume.vol_declarada || []).map(v => (v / 1e9).toFixed(2)),
+                                                backgroundColor: "#F59E0B",
+                                                borderRadius: 4
+                                            },
+                                            {
+                                                label: "Aproximada (R$ Bi)",
+                                                data: (overviewCharts.ntnb_volume.vol_aproximada || []).map(v => (v / 1e9).toFixed(2)),
+                                                backgroundColor: "rgba(245, 158, 11, 0.35)",
+                                                borderColor: "rgba(245, 158, 11, 0.5)",
+                                                borderWidth: 1,
+                                                borderRadius: 4
+                                            }
+                                        ]
+                                    }}
+                                    options={{
+                                        indexAxis: "y",
+                                        scales: {
+                                            x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } },
+                                            y: { stacked: true, grid: { display: false }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono", size: 11 } } }
+                                        },
+                                        plugins: {
+                                            legend: { display: false },
+                                            tooltip: {
+                                                callbacks: {
+                                                    label: (ctx) => {
+                                                        const dsIdx = ctx.datasetIndex;
+                                                        const lbl = ctx.chart.data.labels[ctx.dataIndex];
+                                                        const vol = ctx.parsed.x;
+                                                        const cntArr = dsIdx === 0 ? overviewCharts.ntnb_volume.cnt_declarada : overviewCharts.ntnb_volume.cnt_aproximada;
+                                                        const cnt = cntArr ? cntArr[ctx.dataIndex] : 0;
+                                                        const fonte = dsIdx === 0 ? "Ref. declarada no texto" : "Aprox. por vencimento";
+                                                        return [`${lbl}: R$ ${vol} Bi (${cnt} emissões)`, fonte];
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* 3A. Evolução Mensal Consolidada do Volume (Gráfico de Linha Mês a Mês) */}
+                        {overviewCharts.monthly_volume && (
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                                    <div>
+                                        <h3 className="text-base font-bold text-white font-display">Histórico de volume consolidado mês a mês (R$ Bi)</h3>
+                                        <p className="text-xs text-slate-400">Evolução temporal em linha do volume total registrado na CVM mês a mês</p>
+                                    </div>
+                                </div>
+                                <ChartWrapper
                                     type="line"
                                     height={320}
                                     data={{
-                                        labels: overviewCharts.vencimento_spread.labels,
+                                        labels: overviewCharts.monthly_volume.labels,
                                         datasets: [
-                                            { 
-                                                label: "CDI+ Spread (% a.a.)", 
-                                                data: overviewCharts.vencimento_spread.cdi_spread, 
-                                                showLine: false,
-                                                pointRadius: 7,
-                                                pointHoverRadius: 10,
-                                                pointBackgroundColor: "#6366F1",
-                                                pointBorderColor: "#C7D2FE",
-                                                pointBorderWidth: 2,
-                                                pointStyle: 'circle'
-                                            },
-                                            { 
-                                                label: "IPCA+ Spread (% a.a.)", 
-                                                data: overviewCharts.vencimento_spread.ipca_spread, 
-                                                showLine: false,
-                                                pointRadius: 7,
-                                                pointHoverRadius: 10,
-                                                pointBackgroundColor: "#F59E0B",
-                                                pointBorderColor: "#FDE68A",
-                                                pointBorderWidth: 2,
-                                                pointStyle: 'circle'
+                                            {
+                                                label: "Volume Consolidado (R$ Bi)",
+                                                data: (overviewCharts.monthly_volume.volumes || []).map(v => (v / 1e9).toFixed(2)),
+                                                borderColor: "#6366F1",
+                                                backgroundColor: "rgba(99, 102, 241, 0.15)",
+                                                fill: true,
+                                                tension: 0.3,
+                                                pointBackgroundColor: "#8B5CF6",
+                                                pointRadius: 3
                                             }
                                         ]
                                     }}
                                     options={{
                                         scales: {
                                             x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                            y: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `${v}%` } }
-                                        },
-                                        plugins: { legend: { display: false } }
-                                    }}
-                                />
-                            </div>
-                        )}
-
-                        {/* 2. Volume Emitido Indexado em cada B (NTN-B) */}
-                        {overviewCharts.ntnb_volume && (
-                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
-                                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                                    <div>
-                                        <h3 className="text-base font-bold text-white font-display flex items-center gap-2">
-                                            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                                            Volume Emitido Indexado por Referência NTN-B (R$ Bi)
-                                        </h3>
-                                        <p className="text-xs text-slate-400">Distribuição do volume de emissões atreladas à inflação (IPCA) por título público de referência (apuradas no Bookbuilding)</p>
-                                    </div>
-                                </div>
-                                <ChartWrapper
-                                    type="bar"
-                                    height={280}
-                                    data={{
-                                        labels: overviewCharts.ntnb_volume.labels,
-                                        datasets: [{
-                                            label: "Volume Registrado (R$ Bi)",
-                                            data: overviewCharts.ntnb_volume.volumes.map(v => (v / 1e9).toFixed(2)),
-                                            backgroundColor: "#F59E0B",
-                                            borderRadius: 6
-                                        }]
-                                    }}
-                                    options={{
-                                        scales: {
-                                            x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
                                             y: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
                                         },
-                                        plugins: { legend: { display: false } }
-                                    }}
-                                />
-                            </div>
-                        )}
-
-                        {/* 3. Histórico de volume de emissão mês a mês & Stacked Indexer */}
-                        <div className="grid grid-cols-1 gap-6">
-                            {overviewCharts.monthly_volume && (
-                                <div className="glass-card rounded-2xl p-6 space-y-4">
-                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                                        <div>
-                                            <h3 className="text-base font-bold text-white font-display">Histórico de Volume de Emissão Mês a Mês (R$ Bi)</h3>
-                                            <p className="text-xs text-slate-400">Evolução mensal consolidada das ofertas públicas registradas</p>
-                                        </div>
-                                    </div>
-                                    <ChartWrapper
-                                        type="line"
-                                        height={300}
-                                        data={{
-                                            labels: overviewCharts.monthly_volume.labels,
-                                            datasets: [{
-                                                label: "Volume Emitido (R$ Bi)",
-                                                data: overviewCharts.monthly_volume.volumes.map(v => (v / 1e9).toFixed(2)),
-                                                borderColor: "#3B82F6",
-                                                backgroundColor: "rgba(59, 130, 246, 0.15)",
-                                                fill: true,
-                                                tension: 0.3,
-                                                pointRadius: 4,
-                                                pointBackgroundColor: "#3B82F6"
-                                            }]
-                                        }}
-                                        options={{
-                                            scales: {
-                                                x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                                y: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
-                                            },
-                                            plugins: { legend: { display: false } }
-                                        }}
-                                    />
-                                </div>
-                            )}
-
-                            {/* Monthly Stacked Bar Chart */}
-                            {overviewCharts.monthly_indexer && (
-                                <div className="glass-card rounded-2xl p-6 space-y-4">
-                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                                        <div>
-                                            <h3 className="text-base font-bold text-white font-display">Evolução Mensal do Volume por Indexador (R$ Bi)</h3>
-                                            <p className="text-xs text-slate-400">Barras empilhadas exibindo a migração temporal entre CDI/DI, IPCA e PRÉ Prefixado</p>
-                                        </div>
-                                        <div className="flex items-center space-x-4 text-xs font-mono">
-                                            <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
-                                            <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-3 h-3 rounded bg-amber-500 inline-block"></span><span>IPCA</span></span>
-                                            <span className="flex items-center space-x-1.5 text-emerald-400"><span className="w-3 h-3 rounded bg-emerald-500 inline-block"></span><span>PRÉ</span></span>
-                                        </div>
-                                    </div>
-                                    <ChartWrapper
-                                        type="bar"
-                                        height={340}
-                                        data={{
-                                            labels: overviewCharts.monthly_indexer.labels,
-                                            datasets: [
-                                                { label: "CDI / DI", data: overviewCharts.monthly_indexer.cdi.map(v => (v / 1e9).toFixed(2)), backgroundColor: "#6366F1", borderRadius: 4 },
-                                                { label: "IPCA / Inflação", data: overviewCharts.monthly_indexer.ipca.map(v => (v / 1e9).toFixed(2)), backgroundColor: "#F59E0B", borderRadius: 4 },
-                                                { label: "PRÉ (Prefixado)", data: overviewCharts.monthly_indexer.pre.map(v => (v / 1e9).toFixed(2)), backgroundColor: "#10B981", borderRadius: 4 }
-                                            ]
-                                        }}
-                                        options={{
-                                            scales: {
-                                                x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                                y: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
-                                            },
-                                            plugins: {
-                                                legend: { display: false },
-                                                tooltip: { mode: "index", intersect: false }
-                                            }
-                                        }}
-                                    />
-                                </div>
-                            )}
-                        </div>
-
-                        {/* 4. Coordenadores e Emissores */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {overviewCharts.top_coordenadores && (
-                                <div className="glass-card rounded-2xl p-6 space-y-4">
-                                    <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Coordenadores Líderes por Volume Registrado (R$ Bi)</h3>
-                                    <ChartWrapper
-                                        type="bar"
-                                        height={320}
-                                        data={{
-                                            labels: overviewCharts.top_coordenadores.labels,
-                                            datasets: [{
-                                                label: "Volume (R$ Bi)",
-                                                data: overviewCharts.top_coordenadores.volumes.map(v => (v / 1e9).toFixed(2)),
-                                                backgroundColor: "#8B5CF6",
-                                                borderRadius: 6
-                                            }]
-                                        }}
-                                        options={{
-                                            indexAxis: "y",
-                                            scales: {
-                                                x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                                y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter", size: 10 } } }
-                                            },
-                                            plugins: { legend: { display: false } }
-                                        }}
-                                    />
-                                </div>
-                            )}
-
-                            {overviewCharts.top_emissores && (
-                                <div className="glass-card rounded-2xl p-6 space-y-4">
-                                    <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Maiores Emissores por Volume Registrado (R$ Bi)</h3>
-                                    <ChartWrapper
-                                        type="bar"
-                                        height={320}
-                                        data={{
-                                            labels: overviewCharts.top_emissores.labels,
-                                            datasets: [{
-                                                label: "Volume (R$ Bi)",
-                                                data: overviewCharts.top_emissores.volumes.map(v => (v / 1e9).toFixed(2)),
-                                                backgroundColor: "#10B981",
-                                                borderRadius: 6
-                                            }]
-                                        }}
-                                        options={{
-                                            indexAxis: "y",
-                                            scales: {
-                                                x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                                y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter", size: 10 } } }
-                                            },
-                                            plugins: { legend: { display: false } }
-                                        }}
-                                    />
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Top Ativos & Funil */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="glass-card rounded-2xl p-6 space-y-4">
-                                <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Volume por Tipo de Ativo Mobiliário (R$ Bi)</h3>
-                                <ChartWrapper
-                                    type="bar"
-                                    height={300}
-                                    data={{
-                                        labels: overviewCharts.top_ativos.labels,
-                                        datasets: [{
-                                            label: "Volume (R$ Bi)",
-                                            data: overviewCharts.top_ativos.volumes.map(v => (v / 1e9).toFixed(2)),
-                                            backgroundColor: "#3B82F6",
-                                            borderRadius: 6
-                                        }]
-                                    }}
-                                    options={{
-                                        indexAxis: "y",
-                                        scales: {
-                                            x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                            y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter" } } }
-                                        },
-                                        plugins: { legend: { display: false } }
-                                    }}
-                                />
-                            </div>
-
-                            <div className="glass-card rounded-2xl p-6 space-y-4">
-                                <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Funil de Status das Ofertas na CVM</h3>
-                                <ChartWrapper
-                                    type="doughnut"
-                                    height={300}
-                                    data={{
-                                        labels: overviewCharts.status_funnel.labels,
-                                        datasets: [{
-                                            data: overviewCharts.status_funnel.counts,
-                                            backgroundColor: ["#6366F1", "#10B981", "#F59E0B", "#3B82F6", "#8B5CF6", "#64748B"]
-                                        }]
-                                    }}
-                                    options={{
                                         plugins: {
-                                            legend: { position: "right", labels: { color: "#E2E8F0", font: { family: "Inter", size: 11 }, usePointStyle: true } }
+                                            legend: { display: false },
+                                            tooltip: { mode: "index", intersect: false }
                                         }
                                     }}
                                 />
                             </div>
+                        )}
+
+                        {/* 3B. Evolução Mensal do Volume por Indexador */}
+                        {overviewCharts.monthly_indexer && (
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                                    <div>
+                                        <h3 className="text-base font-bold text-white font-display">Histórico de volume mês a mês por indexador (R$ Bi)</h3>
+                                        <p className="text-xs text-slate-400">Barras empilhadas exibindo a migração temporal entre CDI/DI, IPCA e PRÉ Prefixado</p>
+                                    </div>
+                                    <div className="flex items-center space-x-4 text-xs font-mono">
+                                        <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
+                                        <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-3 h-3 rounded bg-amber-500 inline-block"></span><span>IPCA</span></span>
+                                        <span className="flex items-center space-x-1.5 text-emerald-400"><span className="w-3 h-3 rounded bg-emerald-500 inline-block"></span><span>PRÉ</span></span>
+                                    </div>
+                                </div>
+                                <ChartWrapper
+                                    type="bar"
+                                    height={340}
+                                    data={{
+                                        labels: overviewCharts.monthly_indexer.labels,
+                                        datasets: [
+                                            { label: "CDI / DI", data: (overviewCharts.monthly_indexer.cdi || []).map(v => (v / 1e9).toFixed(2)), backgroundColor: "#6366F1", borderRadius: 4 },
+                                            { label: "IPCA / Inflação", data: (overviewCharts.monthly_indexer.ipca || []).map(v => (v / 1e9).toFixed(2)), backgroundColor: "#F59E0B", borderRadius: 4 },
+                                            { label: "PRÉ (Prefixado)", data: (overviewCharts.monthly_indexer.pre || []).map(v => (v / 1e9).toFixed(2)), backgroundColor: "#10B981", borderRadius: 4 }
+                                        ]
+                                    }}
+                                    options={{
+                                        scales: {
+                                            x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
+                                            y: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
+                                        },
+                                        plugins: {
+                                            legend: { display: false },
+                                            tooltip: { mode: "index", intersect: false }
+                                        }
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* 3C. Evolução Anual do Volume por Indexador */}
+                        {overviewCharts.yearly_indexer && (
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                                    <div>
+                                        <h3 className="text-base font-bold text-white font-display">Histórico de volume ano a ano por indexador (R$ Bi)</h3>
+                                        <p className="text-xs text-slate-400">Barras empilhadas exibindo a divisão anual entre CDI/DI, IPCA e PRÉ Prefixado</p>
+                                    </div>
+                                    <div className="flex items-center space-x-4 text-xs font-mono">
+                                        <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
+                                        <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-3 h-3 rounded bg-amber-500 inline-block"></span><span>IPCA</span></span>
+                                        <span className="flex items-center space-x-1.5 text-emerald-400"><span className="w-3 h-3 rounded bg-emerald-500 inline-block"></span><span>PRÉ</span></span>
+                                    </div>
+                                </div>
+                                <ChartWrapper
+                                    type="bar"
+                                    height={340}
+                                    data={{
+                                        labels: overviewCharts.yearly_indexer.labels,
+                                        datasets: [
+                                            { label: "CDI / DI", data: (overviewCharts.yearly_indexer.cdi || []).map(v => (v / 1e9).toFixed(2)), backgroundColor: "#6366F1", borderRadius: 4 },
+                                            { label: "IPCA / Inflação", data: (overviewCharts.yearly_indexer.ipca || []).map(v => (v / 1e9).toFixed(2)), backgroundColor: "#F59E0B", borderRadius: 4 },
+                                            { label: "PRÉ (Prefixado)", data: (overviewCharts.yearly_indexer.pre || []).map(v => (v / 1e9).toFixed(2)), backgroundColor: "#10B981", borderRadius: 4 }
+                                        ]
+                                    }}
+                                    options={{
+                                        scales: {
+                                            x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
+                                            y: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
+                                        },
+                                        plugins: {
+                                            legend: { display: false },
+                                            tooltip: { mode: "index", intersect: false }
+                                        }
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* 4. Coordenadores e Emissores com Toggle Top 10 vs Ver Todos */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {overviewCharts.top_coordenadores && (
+                                <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 flex flex-col">
+                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                                        <h3 className="text-base font-bold text-white font-display">Coordenadores Líderes por Volume Registrado (R$ Bi)</h3>
+                                        <button 
+                                            onClick={() => setShowAllLeaders(!showAllLeaders)}
+                                            className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
+                                            {showAllLeaders ? "Ver Top 10" : "Ver Todos"}
+                                        </button>
+                                    </div>
+                                    <div className={showAllLeaders ? "max-h-[440px] overflow-y-auto pr-2 custom-scrollbar" : ""}>
+                                        <ChartWrapper
+                                            type="bar"
+                                            height={showAllLeaders ? Math.max(320, (overviewCharts.top_coordenadores.labels?.length || 10) * 26) : 320}
+                                            data={{
+                                                labels: (overviewCharts.top_coordenadores.labels || []).slice(0, showAllLeaders ? 100 : 10),
+                                                datasets: [{
+                                                    label: "Volume (R$ Bi)",
+                                                    data: (overviewCharts.top_coordenadores.volumes || []).slice(0, showAllLeaders ? 100 : 10).map(v => (v / 1e9).toFixed(2)),
+                                                    backgroundColor: "#8B5CF6",
+                                                    borderRadius: 6
+                                                }]
+                                            }}
+                                            options={{
+                                                indexAxis: "y",
+                                                scales: {
+                                                    x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
+                                                    y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter", size: 10 } } }
+                                                },
+                                                plugins: { legend: { display: false } }
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {overviewCharts.top_emissores && (
+                                <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 flex flex-col">
+                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                                        <h3 className="text-base font-bold text-white font-display">Maiores Emissores por Volume Registrado (R$ Bi)</h3>
+                                        <button 
+                                            onClick={() => setShowAllIssuers(!showAllIssuers)}
+                                            className="px-2.5 py-1 text-xs font-mono rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white transition-all border border-emerald-500/30 whitespace-nowrap">
+                                            {showAllIssuers ? "Ver Top 10" : "Ver Todos"}
+                                        </button>
+                                    </div>
+                                    <div className={showAllIssuers ? "max-h-[440px] overflow-y-auto pr-2 custom-scrollbar" : ""}>
+                                        <ChartWrapper
+                                            type="bar"
+                                            height={showAllIssuers ? Math.max(320, (overviewCharts.top_emissores.labels?.length || 10) * 26) : 320}
+                                            data={{
+                                                labels: (overviewCharts.top_emissores.labels || []).slice(0, showAllIssuers ? 100 : 10),
+                                                datasets: [{
+                                                    label: "Volume (R$ Bi)",
+                                                    data: (overviewCharts.top_emissores.volumes || []).slice(0, showAllIssuers ? 100 : 10).map(v => (v / 1e9).toFixed(2)),
+                                                    backgroundColor: "#10B981",
+                                                    borderRadius: 6
+                                                }]
+                                            }}
+                                            options={{
+                                                indexAxis: "y",
+                                                scales: {
+                                                    x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
+                                                    y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter", size: 10 } } }
+                                                },
+                                                plugins: { legend: { display: false } }
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
 
                 {/* Tab 3: Investor Demographics */}
-                {activeTab === "investors" && investorCharts && (
+                {activeTab === "investors" && investorCharts?.demographics && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="glass-card rounded-2xl p-6 space-y-4">
                             <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Demografia e Alocação de Investidores (R$ Bi)</h3>
@@ -1411,10 +1758,10 @@ const App = () => {
                                 type="bar"
                                 height={320}
                                 data={{
-                                    labels: investorCharts.demographics.labels,
+                                    labels: investorCharts.demographics.labels || [],
                                     datasets: [{
                                         label: "Volume Alocado (R$ Bi)",
-                                        data: investorCharts.demographics.values.map(v => (v / 1e9).toFixed(2)),
+                                        data: (investorCharts.demographics.values || []).map(v => (v / 1e9).toFixed(2)),
                                         backgroundColor: ["#10B981", "#6366F1", "#3B82F6", "#8B5CF6"],
                                         borderRadius: 8
                                     }]
@@ -1435,9 +1782,9 @@ const App = () => {
                                 type="pie"
                                 height={320}
                                 data={{
-                                    labels: investorCharts.demographics.labels,
+                                    labels: investorCharts.demographics.labels || [],
                                     datasets: [{
-                                        data: investorCharts.demographics.values,
+                                        data: investorCharts.demographics.values || [],
                                         backgroundColor: ["#10B981", "#6366F1", "#3B82F6", "#8B5CF6"]
                                     }]
                                 }}

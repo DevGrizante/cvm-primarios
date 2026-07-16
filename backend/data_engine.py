@@ -5,39 +5,166 @@ import zipfile
 import io
 import urllib.request
 import ssl
-from datetime import datetime
+import time
+import json
+import threading
+from datetime import datetime, timedelta, date, time as dt_time, timezone
+import unicodedata
 from collections import defaultdict
 
 ZIP_URL = "https://dados.cvm.gov.br/dados/OFERTA/DISTRIB/DADOS/oferta_distribuicao.zip"
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
 ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
+NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
 class CVMDataEngine:
     def __init__(self):
         self.rows = []
         self.last_update = None
         self.options_cache = {}
+        self._scheduler_started = False
+
+    def _ultimo_slot(self, agora=None):
+        if agora is None:
+            agora = datetime.now()
+        try:
+            import zoneinfo
+            sp_tz = zoneinfo.ZoneInfo("America/Sao_Paulo")
+            agora_sp = agora.astimezone(sp_tz)
+        except Exception:
+            sp_tz = timezone(timedelta(hours=-3))
+            if agora.tzinfo is None:
+                agora_sp = agora.replace(tzinfo=sp_tz)
+            else:
+                agora_sp = agora.astimezone(sp_tz)
+        
+        if agora_sp.hour < 8:
+            ontem = agora_sp.date() - timedelta(days=1)
+            slot = datetime.combine(ontem, dt_time(12, 0), tzinfo=sp_tz)
+        elif agora_sp.hour < 12:
+            hoje = agora_sp.date()
+            slot = datetime.combine(hoje, dt_time(8, 0), tzinfo=sp_tz)
+        else:
+            hoje = agora_sp.date()
+            slot = datetime.combine(hoje, dt_time(12, 0), tzinfo=sp_tz)
+        return slot
+
+    def _proximo_slot(self, agora=None):
+        if agora is None:
+            agora = datetime.now()
+        try:
+            import zoneinfo
+            sp_tz = zoneinfo.ZoneInfo("America/Sao_Paulo")
+            agora_sp = agora.astimezone(sp_tz)
+        except Exception:
+            sp_tz = timezone(timedelta(hours=-3))
+            if agora.tzinfo is None:
+                agora_sp = agora.replace(tzinfo=sp_tz)
+            else:
+                agora_sp = agora.astimezone(sp_tz)
+        
+        if agora_sp.hour < 8:
+            hoje = agora_sp.date()
+            slot = datetime.combine(hoje, dt_time(8, 0), tzinfo=sp_tz)
+        elif agora_sp.hour < 12:
+            hoje = agora_sp.date()
+            slot = datetime.combine(hoje, dt_time(12, 0), tzinfo=sp_tz)
+        else:
+            amanha = agora_sp.date() + timedelta(days=1)
+            slot = datetime.combine(amanha, dt_time(8, 0), tzinfo=sp_tz)
+        return slot
+
+    def needs_refresh(self):
+        source_zip = ZIP_PATH if os.path.exists(ZIP_PATH) else (SCRATCH_ZIP if os.path.exists(SCRATCH_ZIP) else None)
+        if not source_zip or not os.path.exists(source_zip):
+            return True
+        try:
+            mtime = os.path.getmtime(source_zip)
+            ultimo = self._ultimo_slot().timestamp()
+            return mtime < ultimo
+        except Exception:
+            return False
+
+    def _start_scheduler_worker(self):
+        if self._scheduler_started:
+            return
+        self._scheduler_started = True
+        
+        def _schedule_loop():
+            while True:
+                try:
+                    proximo = self._proximo_slot()
+                    agora = datetime.now(proximo.tzinfo) if proximo.tzinfo else datetime.now()
+                    diff = (proximo - agora).total_seconds()
+                    sleep_time = max(diff + 10, 10)
+                    print(f"[CVM SCHEDULER] Refresh agendado para {proximo.strftime('%H:%M')} (em {sleep_time/3600:.1f}h)")
+                    time.sleep(sleep_time)
+                    print("[CVM SCHEDULER] Slot alcançado! Verificando e atualizando base CVM...")
+                    if self.needs_refresh():
+                        try:
+                            ctx = ssl.create_default_context()
+                            req = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req, context=ctx, timeout=60) as resp:
+                                content = resp.read()
+                                os.makedirs(CACHE_DIR, exist_ok=True)
+                                with open(ZIP_PATH, "wb") as f:
+                                    f.write(content)
+                            print("[CVM SCHEDULER] Download concluído! Recarregando dados e cache SRE...")
+                            self.load_from_zip(ZIP_PATH)
+                        except Exception as dl_err:
+                            print(f"[CVM SCHEDULER] Erro no download do slot: {dl_err}. Agendando retry em 15 min...")
+                            time.sleep(900)
+                except Exception as e:
+                    print(f"[CVM SCHEDULER] Erro no loop de agendamento: {e}")
+                    time.sleep(60)
+        
+        threading.Thread(target=_schedule_loop, daemon=True).start()
+
+    def _log_top_coordenadores(self):
+        emissor_vol = defaultdict(float)
+        for r in self.rows:
+            l = r.get("Lider")
+            if l and l != "Não Informado":
+                emissor_vol[l] += r.get("Volume_Float", 0.0)
+        top_c = sorted(emissor_vol.items(), key=lambda x: x[1], reverse=True)[:30]
+        print("=== Top 30 Líderes Canônicos (pós-normalização) ===")
+        for idx, (nome, vol) in enumerate(top_c, 1):
+            print(f"{idx}. {nome} - R$ {vol/1e9:.2f} Bi")
+        print("===================================================")
 
     def ensure_data(self):
         os.makedirs(CACHE_DIR, exist_ok=True)
         source_zip = None
-        if os.path.exists(ZIP_PATH):
-            source_zip = ZIP_PATH
-        elif os.path.exists(SCRATCH_ZIP):
-            source_zip = SCRATCH_ZIP
+        if not self.needs_refresh():
+            if os.path.exists(ZIP_PATH):
+                source_zip = ZIP_PATH
+            elif os.path.exists(SCRATCH_ZIP):
+                source_zip = SCRATCH_ZIP
         
         if not source_zip:
-            print("Downloading CVM dataset from official API...")
-            ctx = ssl.create_default_context()
-            req = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx) as resp:
-                content = resp.read()
-                with open(ZIP_PATH, "wb") as f:
-                    f.write(content)
-            source_zip = ZIP_PATH
+            print("Downloading latest CVM dataset from official API (or slot refresh needed)...")
+            try:
+                ctx = ssl.create_default_context()
+                req = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
+                    with open(ZIP_PATH, "wb") as f:
+                        # Stream in 256KB chunks to avoid loading the full zip into RAM
+                        while True:
+                            chunk = resp.read(262144)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                source_zip = ZIP_PATH
+            except Exception as e:
+                print(f"Notice: Could not download fresh zip ({e}), falling back to existing cache if available.")
+                if os.path.exists(ZIP_PATH):
+                    source_zip = ZIP_PATH
+                elif os.path.exists(SCRATCH_ZIP):
+                    source_zip = SCRATCH_ZIP
         
         self.load_from_zip(source_zip)
+        self._start_scheduler_worker()
 
     def _clean_text(self, text):
         if not text or text == "N/A" or text == "" or text == "---" or text == "--":
@@ -70,6 +197,101 @@ class CVMDataEngine:
         for k, v in replacements.items():
             t = t.replace(k, v)
         return t
+
+    def _extract_coordenadores(self, r):
+        lider_raw = r.get("Lider", "Não Informado")
+        lider_norm = self._normalize_coordenador(lider_raw)
+        candidates = []
+        if lider_norm != "Não Informado":
+            candidates.append(lider_norm)
+        
+        texts_to_scan = [
+            str(lider_raw),
+            str(r.get("Grupo_Coordenador", "")),
+            str(r.get("Identificacao_devedores_coobrigados", "")),
+            str(r.get("Descricao_garantias", "")),
+            str(r.get("Destinacao_recursos", ""))
+        ]
+        
+        split_regex = re.compile(r'\s*(?:;|\be\b|\b[Ee]\b|\+|,|\s+/\s+)\s*')
+        for txt in texts_to_scan:
+            if not txt or txt in ("Não Informado", "N/A", "Não informado", ""):
+                continue
+            whole_norm = self._normalize_coordenador(txt)
+            if whole_norm != "Não Informado" and whole_norm != txt.upper() and whole_norm not in candidates:
+                candidates.append(whole_norm)
+                
+            parts = split_regex.split(txt)
+            for p in parts:
+                p_clean = p.strip()
+                if len(p_clean) > 3:
+                    norm = self._normalize_coordenador(p_clean)
+                    if norm != "Não Informado" and norm != lider_norm and len(norm) <= 60 and (norm != p_clean.upper() or any(w in norm.upper() for w in ("BANCO", "BBA", "BBI", "XP", "BTG", "SAFRA", "GENIAL", "UBS", "SANTANDER", "CITI", "MORGAN", "BRADESCO", "ITAU", "CORRETORA", "DISTRIBUIDORA", "DTVM", "CTVM"))):
+                        if norm not in candidates:
+                            candidates.append(norm)
+        
+        if not candidates and lider_norm != "Não Informado":
+            candidates.append(lider_norm)
+        consorcio_str = " / ".join(candidates) if len(candidates) > 1 else lider_norm
+        return lider_norm, consorcio_str, candidates
+
+    def _normalize_coordenador(self, nome):
+        if not nome or str(nome).strip() in ("Não Informado", "", "None", "Não informado"):
+            return "Não Informado"
+        s = self._clean_text(str(nome)).upper()
+        s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+        s = " ".join(s.split())
+        
+        blacklist_fragments = {
+            "VALORES MOBILIARIOS", "TITULOS E VALORES MOBILIARIOS", "CORRETORA DE TITULOS E VALORES MOBILIARIOS",
+            "DISTRIBUIDORA DE TITULOS E VALORES MOBILIARIOS", "CAMBIO TITULOS E VALORES MOBILIARIOS",
+            "CAMBIO, TITULOS E VALORES MOBILIARIOS", "TITULOS E VALORES MOBILIARIOS S.A.",
+            "VALORES MOBILIARIOS S.A.", "VALORES", "TITULOS", "CAMBIO", "CORRETORA DE CAMBIO",
+            "COORDENADOR PLENO", "SECURITIZADORA", "ADMINISTRADOR DE CARTEIRA", "NAO INFORMADO",
+            "DISTRIBUIDORA DE TITULOS", "VALORES MOBILIARIOS SA"
+        }
+        if s in blacklist_fragments or s.startswith("VALORES MOBILIARIOS") or s == "VALORES MOBILIARIOS":
+            return "Não Informado"
+        
+        if s.startswith("BANCO "):
+            s = s[6:].strip()
+            
+        for suf in (" S.A.", " S/A", " LTDA.", " LTDA", " CTVM", " CCTVM", " DTVM", " DE INVESTIMENTO", " INVESTIMENTO", " INVESTIMENTOS", " S.A", " SA"):
+            if s.endswith(suf):
+                s = s[:-len(suf)].strip()
+                
+        aliases = {
+            "ITAU BBA": "ITAÚ BBA",
+            "BANCO ITAU BBA": "ITAÚ BBA",
+            "ITAU UNIBANCO": "ITAÚ BBA",
+            "ITAU": "ITAÚ BBA",
+            "BTG PACTUAL": "BTG PACTUAL",
+            "BTG INVESTMENT BANKING": "BTG PACTUAL",
+            "BANCO BTG PACTUAL": "BTG PACTUAL",
+            "BTG": "BTG PACTUAL",
+            "BRADESCO BBI": "BRADESCO BBI",
+            "BANCO BRADESCO BBI": "BRADESCO BBI",
+            "BRADESCO": "BRADESCO BBI",
+            "XP INVESTIMENTOS": "XP INVESTIMENTOS",
+            "XP": "XP INVESTIMENTOS",
+            "SANTANDER (BRASIL)": "BANCO SANTANDER (BRASIL)",
+            "SANTANDER": "BANCO SANTANDER (BRASIL)",
+            "BANCO SANTANDER": "BANCO SANTANDER (BRASIL)",
+            "BANCO SANTANDER (BRASIL)": "BANCO SANTANDER (BRASIL)",
+            "UBS BRASIL": "UBS BRASIL",
+            "UBS BB": "UBS BRASIL",
+            "UBS": "UBS BRASIL",
+            "SAFRA": "BANCO SAFRA",
+            "BANCO SAFRA": "BANCO SAFRA",
+            "GENIAL": "GENIAL",
+            "ORAMA": "ÓRAMA"
+        }
+        if s in aliases:
+            return aliases[s]
+        for k, v in aliases.items():
+            if k == s or (len(k) > 4 and k in s and "BANCO" not in k and k not in ("ITAU", "BTG", "UBS", "XP")):
+                return v
+        return s
 
     def _parse_float(self, val):
         if not val or val == "N/A":
@@ -106,6 +328,59 @@ class CVMDataEngine:
             round(raw_inst * scale, 2)
         )
 
+    def _build_demografia_detalhada(self, r, vol_f, qtde_f, is_hist=False):
+        if not is_hist:
+            pairs = [
+                ("Pessoas naturais", r.get("Num_Invest_Pessoa_Natural"), r.get("Qtde_VM_Pessoa_Natural")),
+                ("Clubes de investimento", r.get("Num_Invest_Clube_Investimento"), r.get("Qtde_VM_Clube_Investimento")),
+                ("Fundos de investimento", r.get("Num_Invest_Fundos_Investimento"), r.get("Qtde_VM_Fundos_Investimento")),
+                ("Entidades de previdência privada", r.get("Num_Invest_Entidade_Previdencia_Privada"), r.get("Qtde_VM_Entidade_Previdencia_Privada")),
+                ("Companhias seguradoras", r.get("Num_Invest_Companhia_Seguradora"), r.get("Qtde_VM_Companhia_Seguradora")),
+                ("Investidores estrangeiros", r.get("Num_Invest_Investidor_Estrangeiro"), r.get("Qtde_VM_Investidor_Estrangeiro")),
+                ("Instituições Intermediárias participantes do consórcio de distribuição", r.get("Num_Invest_Instit_Intermed_Partic_Consorcio_Distrib"), r.get("Qtde_VM_Instit_Intermed_Partic_Consorcio_Distrib")),
+                ("Instituições financeiras ligadas ao emissor e aos participantes do consórcio", r.get("Num_Invest_Instit_Financ_Emissora_Partic_Consorcio"), r.get("Qtde_VM_Instit_Financ_Emissora_Partic_Consorcio")),
+                ("Demais instituições financeiras", r.get("Num_Invest_Demais_Instit_Financ"), r.get("Qtde_VM_Demais_Instit_Financ")),
+                ("Demais pessoas jurídicas ligadas ao emissor e aos participantes do consórcio", r.get("Num_Invest_Demais_Pessoa_Juridica_Emissora_Partic_Consorcio"), r.get("Qtde_VM_Demais_Pessoa_Juridica_Emissora_Partic_Consorcio")),
+                ("Demais pessoas jurídicas", r.get("Num_Invest_Demais_Pessoa_Juridica"), r.get("Qtde_VM_Demais_Pessoa_Juridica")),
+                ("Sócios, administradores, empregados, prepostos e demais pessoas ligadas ao emissor e aos participantes do consórcio", r.get("Num_Invest_Soc_Adm_Emp_Prop_Demais_Pess_Jurid_Emiss_Partic_Consorcio"), r.get("Qdte_VM_Soc_Adm_Emp_Prop_Demais_Pess_Jurid_Emiss_Partic_Consorcio") or r.get("Qtde_VM_Soc_Adm_Emp_Prop_Demais_Pess_Jurid_Emiss_Partic_Consorcio")),
+            ]
+        else:
+            pairs = [
+                ("Pessoas naturais", r.get("Nr_Pessoa_Fisica"), r.get("Qtd_Pessoa_Fisica") or r.get("Qtd_Cli_Pessoa_Fisica")),
+                ("Clubes de investimento", r.get("Nr_Clube_Investimento"), r.get("Qtd_Clube_Investimento")),
+                ("Fundos de investimento", r.get("Nr_Fundos_Investimento"), r.get("Qtd_Fundos_Investimento")),
+                ("Entidades de previdência privada", r.get("Nr_Entidade_Previdencia_Privada"), r.get("Qtd_Entidade_Previdencia_Privada")),
+                ("Companhias seguradoras", r.get("Nr_Companhia_Seguradora"), r.get("Qtd_Companhia_Seguradora")),
+                ("Investidores estrangeiros", r.get("Nr_Investidor_Estrangeiro"), r.get("Qtd_Investidor_Estrangeiro") or r.get("Qtd_Cli_Investidor_Estrangeiro")),
+                ("Instituições Intermediárias participantes do consórcio de distribuição", r.get("Nr_Instit_Intermed_Partic_Consorcio_Distrib"), r.get("Qtd_Instit_Intermed_Partic_Consorcio_Distrib")),
+                ("Instituições financeiras ligadas ao emissor e aos participantes do consórcio", r.get("Nr_Instit_Financ_Emissora_Partic_Consorcio"), r.get("Qtd_Instit_Financ_Emissora_Partic_Consorcio")),
+                ("Demais instituições financeiras", r.get("Nr_Demais_Instit_Financ"), r.get("Qtd_Demais_Instit_Financ")),
+                ("Demais pessoas jurídicas ligadas ao emissor e aos participantes do consórcio", r.get("Nr_Demais_Pessoa_Juridica_Emissora_Partic_Consorcio"), r.get("Qtd_Demais_Pessoa_Juridica_Emissora_Partic_Consorcio") or r.get("Qtd_Cli_Pessoa_Juridica_Ligada_Adm")),
+                ("Demais pessoas jurídicas", r.get("Nr_Demais_Pessoa_Juridica"), r.get("Qtd_Demais_Pessoa_Juridica") or r.get("Qtd_Cli_Pessoa_Juridica") or r.get("QtD_Cli_Demais_Pessoa_Juridica")),
+                ("Sócios, administradores, empregados, prepostos e demais pessoas ligadas ao emissor e aos participantes do consórcio", r.get("Nr_Soc_Adm_Emp_Prop_Demais_Pess_Jurid_Emiss_Partic_Consorcio"), r.get("Qdt_Soc_Adm_Emp_Prop_Demais_Pess_Jurid_Emiss_Partic_Consorcio") or r.get("Qtd_Cli_Soc_Adm_Emp_Prop_Demais_Pess_Jurid_Emiss_Partic_Consorcio")),
+            ]
+        
+        raw_items = []
+        for cat, inv_raw, qtde_raw in pairs:
+            inv = self._parse_int(inv_raw)
+            qtde = self._parse_float(qtde_raw)
+            raw_items.append({"categoria": cat, "investidores": inv, "qtde_vm": round(qtde, 4)})
+            
+        s_det = sum(item["qtde_vm"] for item in raw_items)
+        if s_det <= 0 or vol_f <= 0:
+            scale = 0.0
+        elif s_det <= qtde_f * 1.05 and qtde_f > 0:
+            scale = vol_f / qtde_f
+        elif s_det <= vol_f * 1.05:
+            scale = 1.0
+        else:
+            scale = vol_f / s_det
+            
+        for item in raw_items:
+            item["vol_alocado"] = round(item["qtde_vm"] * scale, 2)
+        return raw_items
+
+
     def _infer_indexador(self, row_dict, is_hist=False):
         import re
         if is_hist:
@@ -127,11 +402,13 @@ class CVMDataEngine:
         if re.search(r'\b(?:100%|99%|101%|102%|105%|\+\s*|\-\s*)\s*DI\b', text) or re.search(r'\bDI\s*\+', text):
             return "CDI / DI", False
 
-        # 3. Priority 3: Explicit Prefixado terms
+        # 3. Priority 3: Explicit Prefixado terms or Pure Percentage / Fixed Rate without floating index keywords
         if any(w in text for w in ("PREFIXAD", "PRÉ-FIXAD", "PRE-FIXAD", "TAXA PRÉ", "TAXA PRE ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS")):
             return "PRÉ (Prefixado)", False
-        if re.search(r'\b\d+[\d,.]*\s*%\s*(?:A\.A\.|AA|AO ANO|A\.M\.|AM|AO MÊS)\b', text):
-            return "PRÉ (Prefixado)", False
+        if re.search(r'\d+[\d,.]*\s*%', text) or any(k in text for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE")):
+            has_floating_or_infla = re.search(r'\b(?:CDI|DI|IPCA|INPC|IGP-M|IGPM|INCC|SELIC|TR|ANBID|TJLP|LIBOR|FLUTUANTE|FLUTUANTES|OVER)\b', text) or any(k in text for k in ("TAXA DI", " DI+", " DI-", "% DI", "DI %", "DI/"))
+            if not has_floating_or_infla:
+                return "PRÉ (Prefixado)", False
 
         # 4. Domain Inference based on statutory market structure (marked as inferred/heuristic)
         if "DEB" in ativo:
@@ -195,7 +472,7 @@ class CVMDataEngine:
                     base = "CDI" if idx_type == "CDI / DI" else "IPCA"
                     return f"{base} + {val}", True
                 return val, True
-            m2 = re.search(r'(\d+[\d,.]*\s*%\s*(?:a\.a\.|aa|a\.m\.|am|ao ano|[\+\-]\s*(?:CDI|IPCA|DI)))', text, re.I)
+            m2 = re.search(r'(\d+[\d,.]*\s*%\s*(?:a\.a\.|aa|a\.m\.|am|ao ano|[\+\-]\s*(?:CDI|IPCA|DI))?)', text, re.I)
             if m2:
                 val = m2.group(1).strip()
                 if idx_type == "CDI / DI" and "CDI" not in val.upper() and "DI" not in val.upper():
@@ -233,6 +510,28 @@ class CVMDataEngine:
                 return "Taxa Prefixada a Definir", False
             return "Não Informado (CVM)", False
 
+    def _sync_row_indexador(self, r):
+        import re
+        taxa = str(r.get("Taxa_Juros", "")).strip()
+        t_upper = taxa.upper()
+        if not taxa or taxa in ("Não Informado (CVM)", "N/A", "-", "--", "Não Informado"):
+            return
+        
+        has_cdi = any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %", "DI+", "TAXA DI")) or t_upper.startswith("DI ") or t_upper.endswith(" DI") or re.search(r'\b(?:CDI|DI|SELIC|FLUTUANTE|FLUTUANTES|OVER|ANBID|TJLP|LIBOR)\b', t_upper)
+        has_ipca = any(k in t_upper for k in ("IPCA", "INPC", "IGP-M", "IGPM", "TR ", "INFLA")) or t_upper.startswith("IPCA") or t_upper.endswith(" IPCA") or re.search(r'\b(?:IPCA|INPC|IGP-M|IGPM|INCC|TR|INFLAÇÃO|INFLACAO|IPCR)\b', t_upper)
+        has_pre_keyword = any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX", "TAXA PRÉ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS"))
+        
+        if has_cdi:
+            r["Indexador"] = "CDI / DI"
+            r["Indexador_Inferido"] = False
+        elif has_ipca:
+            r["Indexador"] = "IPCA / Inflação"
+            r["Indexador_Inferido"] = False
+        elif has_pre_keyword or re.search(r'\d+[\d,.]*\s*%', taxa) or any(k in t_upper for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE", "VALOR NOMINAL UNITÁRIO", "VALOR NOMINAL UNITARIO")):
+            if not has_cdi and not has_ipca:
+                r["Indexador"] = "PRÉ (Prefixado)"
+                r["Indexador_Inferido"] = False
+
     def _extract_vencimento(self, r, is_hist):
         import re
         if is_hist:
@@ -247,6 +546,23 @@ class CVMDataEngine:
                 return f"{parts[1]}/{parts[2][-2:]}"
             return raw[:7] if len(raw) >= 7 else "N/I"
         else:
+            campos = r.get("Caracteristicas_CVM", [])
+            if isinstance(campos, list):
+                for c in campos:
+                    if isinstance(c, dict):
+                        nm = str(c.get("campoNome", "")).lower()
+                        val = str(c.get("campoValor", "")).strip()
+                        if "venc" in nm or "data de vencimento" in nm:
+                            if val and val not in ("-", "--", "00/00/0000", "Não Informado"):
+                                if len(val) >= 10 and val[2] == "/":
+                                    parts = val.split("/")
+                                    return f"{parts[1]}/{parts[2][-2:]}"
+                                elif len(val) >= 10 and val[4] == "-":
+                                    parts = val.split("-")
+                                    return f"{parts[1]}/{parts[0][-2:]}"
+                                elif len(val) >= 7 and val[2] == "/":
+                                    return f"{val[:2]}/{val[-2:]}"
+                                return val[:7]
             text = f"{r.get('Descricao_lastro','')} {r.get('Destinacao_recursos','')} {r.get('Ativos_alvo','')}"
             m = re.search(r'\b(?:vencimento|vence|venc\.?)\s+(?:em|dia|até)?\s*(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2}|\d{2}/\d{4})\b', text, re.I)
             if m:
@@ -264,8 +580,14 @@ class CVMDataEngine:
                 return f"Anual/{m2.group(1)[-2:]}"
             return "N/I"
 
+    @staticmethod
+    def _closest_vertex(year):
+        """Given a maturity year, find the closest standard NTN-B vertex. Ties go to the longer vertex."""
+        if year < 2026:
+            return year
+        return min(NTNB_VERTICES, key=lambda v: (abs(v - year), -v))
+
     def _extract_ntnb_reference(self, r):
-        import re
         texts = [
             str(r.get("Taxa_Juros", "")),
             str(r.get("Descricao_Lastro", "")),
@@ -275,24 +597,144 @@ class CVMDataEngine:
             str(r.get("Destinacao_recursos", "")),
             str(r.get("Ativos_alvo", ""))
         ]
+        # Caracteristicas_CVM is a list of dicts [{"campoNome": ..., "campoValor": ...}, ...]
+        campos = r.get("Caracteristicas_CVM", [])
+        if isinstance(campos, list):
+            for c in campos:
+                if isinstance(c, dict):
+                    texts.append(str(c.get("campoValor", "")))
+        # Taxa_Declarada can be True/False or a string from API
+        td = r.get("Taxa_Declarada", "")
+        if isinstance(td, str) and td:
+            texts.append(td)
+
         full_text = " ".join(texts).upper()
-        
-        m = re.search(r'\b(?:NTN-?B|TESOURO\s+IPCA\+?|TN-?B)\s*(?:COM\s+VENCIMENTO\s+EM\s+|APURADA.*?|DE\s+|PARA\s+)?(\d{4})\b', full_text)
+
+        def _valid_4digit(y):
+            return 2026 <= y <= 2060
+
+        def _valid_2digit(yy):
+            return 26 <= yy <= 60
+
+        def _format_ntnb(y, from_text=True):
+            if from_text and y in NTNB_VERTICES:
+                return (f"NTN-B {y}", "declarada")
+            else:
+                return (f"NTN-B {self._closest_vertex(y)}", "aproximada")
+
+        # Pattern 1: short form 2-digit with optional parentheses – e.g., "NTN-B35", "NTNB 35", "NTN-B (35)", "NTN-B(35) + 2,50%" (with negative lookahead)
+        m = re.search(r'NTN-?\s*B\s*\(?\s*(2[6-9]|[3-5]\d|60)\s*\)?\b(?![\d/.])', full_text)
         if m:
-            return f"NTN-B {m.group(1)}"
-        m2 = re.search(r'\b(?:NTN-?B|NTN\s+B)\s*.*?(\d{4})\b', full_text)
-        if m2:
-            return f"NTN-B {m2.group(1)}"
-        return "Outras / Não Espec."
+            yy = int(m.group(1))
+            if _valid_2digit(yy):
+                return _format_ntnb(2000 + yy, from_text=True)
+
+        # Pattern 2: windowed check requiring VENC/MATUR/PRAZO keyword – e.g. "NTN-B com vencimento em 15/08/2030" or "vencimento da NTN-B em 2035"
+        m = re.search(r'NTN-?\s*B\b.{0,60}?\b(?:VENC\w*|VENCE\w*|PRAZO|MATUR\w*)\b.{0,30}?(20[2-6]\d)\b', full_text)
+        if not m:
+            m = re.search(r'(?:VENC\w*|VENCE\w*|PRAZO|MATUR\w*)\b.{0,45}?\bNTN-?\s*B\b.{0,30}?(20[2-6]\d)\b', full_text)
+        if m:
+            year = int(m.group(1))
+            if _valid_4digit(year):
+                return _format_ntnb(year, from_text=True)
+
+        # Pattern 3: direct NTN-B date or year form – e.g. "NTN-B 15/05/2035", "NTN-B 2035"
+        m = re.search(r'NTN-?\s*B\s*(?:\d{1,2}/\d{1,2}/)?(20[2-6]\d)\b', full_text)
+        if m:
+            year = int(m.group(1))
+            if _valid_4digit(year):
+                return _format_ntnb(year, from_text=True)
+
+        # Pattern 4: Tesouro IPCA – "Tesouro IPCA+ ... 2035"
+        m = re.search(r'TESOURO\s+IPCA\+?\s*.*?(\d{4})', full_text)
+        if m:
+            year = int(m.group(1))
+            if _valid_4digit(year):
+                return _format_ntnb(year, from_text=True)
+
+        # Pattern 5: loose B + year – "B35" or "B(35)" only if text also contains NTN or TESOURO
+        if "NTN" in full_text or "TESOURO" in full_text:
+            m = re.search(r'\bB\s*-?\s*\(?\s*(2[6-9]|[3-5]\d|60)\s*\)?\b(?![\d/.])', full_text)
+            if m:
+                yy = int(m.group(1))
+                if _valid_2digit(yy):
+                    return _format_ntnb(2000 + yy, from_text=True)
+
+        # Fallback by maturity when indexer is IPCA or inflation-linked
+        idx_val = str(r.get("Indexador", "")).upper()
+        if any(k in idx_val for k in ("IPCA", "INFLA", "INPC", "IGP-M")):
+            venc = str(r.get("Vencimento", ""))
+            year_found = None
+            if venc and venc != "N/I":
+                m_v = re.search(r'\b(20[2-6]\d|199\d)\b', venc)
+                if m_v:
+                    year_found = int(m_v.group(1))
+                else:
+                    m_v2 = re.search(r'(\d{2})$', venc.strip())
+                    if m_v2:
+                        yy = int(m_v2.group(1))
+                        year_found = 2000 + yy if yy < 80 else 1900 + yy
+            if not year_found or not _valid_4digit(year_found):
+                m_txt = re.findall(r'\b(202[6-9]|20[3-6]\d)\b', full_text)
+                if m_txt:
+                    year_found = max(int(y) for y in m_txt)
+            if year_found and _valid_4digit(year_found):
+                return _format_ntnb(year_found, from_text=False)
+
+        return ("Outras / Não Espec.", "nenhuma")
+
+    def _enter_degraded_mode(self):
+        self.rows = []
+        self.last_update = "Aguardando conexão com servidor CVM (Modo Degradado - Reconectando em background...)"
+        self._build_options_cache()
+        import threading
+        def _retry_loop():
+            time.sleep(30)
+            print("[DEGRADED MODE] Attempting background download retry from CVM portal...")
+            try:
+                ctx = ssl.create_default_context()
+                req = urllib.request.Request(ZIP_URL, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
+                with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
+                    os.makedirs(CACHE_DIR, exist_ok=True)
+                    with open(ZIP_PATH, "wb") as f:
+                        while True:
+                            chunk = resp.read(262144)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                if os.path.exists(ZIP_PATH) and os.path.getsize(ZIP_PATH) > 100000:
+                    print("[DEGRADED MODE] Background download successful! Reloading data engine...")
+                    self.load_from_zip(ZIP_PATH)
+            except Exception as e:
+                print(f"[DEGRADED MODE] Retry failed: {e}. Will keep retrying on next cycle.")
+        threading.Thread(target=_retry_loop, daemon=True).start()
 
     def load_from_zip(self, zip_filepath):
+        if not zip_filepath or not os.path.exists(str(zip_filepath)):
+            print(f"[WARN] No local zip file found ({zip_filepath}). Entering DEGRADED MODE with background retry loop...")
+            self._enter_degraded_mode()
+            return
+
         print(f"Loading CSV files from {zip_filepath}...")
         unified = []
-        with zipfile.ZipFile(zip_filepath, "r") as z:
+        try:
+            z = zipfile.ZipFile(zip_filepath, "r")
+        except Exception as e:
+            print(f"[ERROR] Could not open zip file {zip_filepath}: {e}. Entering DEGRADED MODE...")
+            self._enter_degraded_mode()
+            return
+
+        try:
             # 1. Resolução 160 (Modern 2023+)
+            # NOTA DE INVESTIGAÇÃO (Item 9 - Coordenadores do Consórcio):
+            # A coluna 'Grupo_Coordenador' no CSV oferta_resolucao_160.csv não lista as instituições participantes do consórcio,
+            # mas sim a categoria/papel societário do coordenador líder (ex: 'COORDENADOR PLENO', 'SECURITIZADORA', 'ADMINISTRADOR DE CARTEIRA').
+            # Além disso, a API REST pública da CVM (/sre-publico-cvm/rest/sitePublico/pesquisar/requerimento/{id})
+            # expõe em 'dadosColocacao' apenas contagens consolidadas sem a lista nominal dos bancos co-gerentes.
+            # Conforme especificação 9.4, documentamos esta limitação oficial da fonte CVM e não exibiremos consórcio vazio.
             with z.open("oferta_resolucao_160.csv") as f:
-                lines = [line.decode("latin-1", errors="replace") for line in f]
-                reader = csv.DictReader(lines, delimiter=";")
+                wrapper = io.TextIOWrapper(f, encoding="latin-1", errors="replace", newline="")
+                reader = csv.DictReader(wrapper, delimiter=";")
                 for r in reader:
                     data_clean = (r.get("Data_Registro") or r.get("Data_requerimento") or "")[:10]
                     ano = data_clean[:4]
@@ -351,6 +793,7 @@ class CVMDataEngine:
                         "Qtd_Inv_Previdencia": self._parse_int(r.get("Num_Invest_Entidade_Previdencia_Privada")),
                         "Qtd_Inv_Seguradoras": self._parse_int(r.get("Num_Invest_Companhia_Seguradora")),
                         "Qtd_Inv_Instituicoes": self._parse_int(r.get("Num_Invest_Instit_Intermed_Partic_Consorcio_Distrib")) + self._parse_int(r.get("Num_Invest_Demais_Instit_Financ")),
+                        "Demografia_Detalhada": self._build_demografia_detalhada(r, vol_float, qtde_float, is_hist=False),
                         "Processo_SEI": r.get("Processo_SEI", "Não informado"),
                         "Administrador": self._clean_text(r.get("Administrador")),
                         "Gestor": self._clean_text(r.get("Gestor")),
@@ -370,13 +813,21 @@ class CVMDataEngine:
                         "Titulo_Incentivado": "Sim" if str(r.get("Titulo_incentivado", "")).strip().upper() == "S" else "Não",
                         "Coobrigados": self._clean_text(r.get("Identificacao_devedores_coobrigados"))
                     }
-                    row_dict["Referencia_NTNB"] = self._extract_ntnb_reference(row_dict)
+                    row_dict["Lider_Original"] = row_dict.get("Lider", "Não Informado")
+                    lider_norm, consorcio_str, consorcio_list = self._extract_coordenadores(row_dict)
+                    row_dict["Lider"] = lider_norm
+                    row_dict["Consorcio"] = consorcio_str
+                    row_dict["Consorcio_List"] = consorcio_list
+                    self._sync_row_indexador(row_dict)
+                    ref, fonte = self._extract_ntnb_reference(row_dict)
+                    row_dict["Referencia_NTNB"] = ref
+                    row_dict["NTNB_Fonte"] = fonte
                     unified.append(row_dict)
 
             # 2. Instrução 400/476 (Historical up to 2023)
             with z.open("oferta_distribuicao.csv") as f:
-                lines = [line.decode("latin-1", errors="replace") for line in f]
-                reader = csv.DictReader(lines, delimiter=";")
+                wrapper = io.TextIOWrapper(f, encoding="latin-1", errors="replace", newline="")
+                reader = csv.DictReader(wrapper, delimiter=";")
                 for r in reader:
                     data_clean = (r.get("Data_Registro_Oferta") or r.get("Data_Inicio_Oferta") or "")[:10]
                     ano = data_clean[:4]
@@ -435,6 +886,7 @@ class CVMDataEngine:
                         "Qtd_Inv_Previdencia": self._parse_int(r.get("Nr_Entidade_Previdencia_Privada")),
                         "Qtd_Inv_Seguradoras": self._parse_int(r.get("Nr_Companhia_Seguradora")),
                         "Qtd_Inv_Instituicoes": self._parse_int(r.get("Nr_Demais_Pessoa_Juridica")),
+                        "Demografia_Detalhada": self._build_demografia_detalhada(r, vol_float, qtde_float, is_hist=True),
                         "Processo_SEI": "N/A",
                         "Administrador": "Não informado",
                         "Gestor": "Não informado",
@@ -454,8 +906,25 @@ class CVMDataEngine:
                         "Titulo_Incentivado": "Sim" if str(r.get("Oferta_Incentivo_Fiscal", "")).strip().upper() == "S" else "Não",
                         "Coobrigados": "Não informado"
                     }
-                    row_dict["Referencia_NTNB"] = self._extract_ntnb_reference(row_dict)
+                    row_dict["Lider_Original"] = row_dict.get("Lider", "Não Informado")
+                    lider_norm, consorcio_str, consorcio_list = self._extract_coordenadores(row_dict)
+                    row_dict["Lider"] = lider_norm
+                    row_dict["Consorcio"] = consorcio_str
+                    row_dict["Consorcio_List"] = consorcio_list
+                    self._sync_row_indexador(row_dict)
+                    ref, fonte = self._extract_ntnb_reference(row_dict)
+                    row_dict["Referencia_NTNB"] = ref
+                    row_dict["NTNB_Fonte"] = fonte
                     unified.append(row_dict)
+            z.close()
+        except Exception as e:
+            try:
+                z.close()
+            except Exception:
+                pass
+            print(f"[ERROR] Could not read or unpack zip file {zip_filepath}: {e}. Entering DEGRADED MODE...")
+            self._enter_degraded_mode()
+            return
 
         # Build issuer historical average volume cache
         import hashlib
@@ -563,15 +1032,81 @@ class CVMDataEngine:
         # Sort descending by Data_Clean
         unified.sort(key=lambda x: x["Data_Clean"], reverse=True)
         self.rows = unified
+
+        # Apply persistent SRE enrichment cache to loaded offerings
+        sre_cache_path = os.path.join(CACHE_DIR, "sre_enrichment_cache.json")
+        if os.path.exists(sre_cache_path):
+            cached_sre = {}
+            try:
+                import json
+                with open(sre_cache_path, "r", encoding="utf-8") as f:
+                    cached_sre = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] SRE Cache corrupted on load: {e}. Attempting automatic recovery...")
+                try:
+                    with open(sre_cache_path, "r", encoding="utf-8", errors="ignore") as f:
+                        txt = f.read()
+                    decoder = json.JSONDecoder()
+                    obj, _ = decoder.raw_decode(txt)
+                    if isinstance(obj, dict) and len(obj) > 10:
+                        cached_sre = obj
+                        print(f"[RECOVERY] Successfully recovered {len(cached_sre)} entries via raw_decode!")
+                    else:
+                        raise ValueError("raw_decode insufficient")
+                except Exception:
+                    matches = re.findall(r'("\d{3,7}")\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})', txt)
+                    for k_str, v_str in matches:
+                        try:
+                            cached_sre[json.loads(k_str)] = json.loads(v_str)
+                        except Exception:
+                            pass
+                    if cached_sre:
+                        print(f"[RECOVERY] Successfully recovered {len(cached_sre)} entries via regex salvage!")
+                if cached_sre:
+                    try:
+                        tmp_p = sre_cache_path + ".tmp"
+                        with open(tmp_p, "w", encoding="utf-8") as f:
+                            json.dump(cached_sre, f, ensure_ascii=False)
+                        os.replace(tmp_p, sre_cache_path)
+                    except Exception:
+                        pass
+
+            if cached_sre:
+                matches_count = 0
+                for r in self.rows:
+                    req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+                    if req_id and req_id in cached_sre:
+                        matches_count += 1
+                        c_data = cached_sre[req_id]
+                        if c_data.get("Taxa_Juros"):
+                            r["Taxa_Juros"] = c_data["Taxa_Juros"]
+                            r["Taxa_Declarada"] = True
+                            r["Remuneracao_API_CVM"] = c_data["Taxa_Juros"]
+                        if c_data.get("Vencimento") and c_data.get("Vencimento") != "N/I":
+                            r["Vencimento"] = c_data["Vencimento"]
+                        if c_data.get("Caracteristicas_CVM"):
+                            r["Caracteristicas_CVM"] = c_data["Caracteristicas_CVM"]
+                        self._sync_row_indexador(r)
+                        ref, fonte = self._extract_ntnb_reference(r)
+                        r["Referencia_NTNB"] = ref
+                        r["NTNB_Fonte"] = fonte
+                total_rows = max(len(self.rows), 1)
+                print(f"Applied {matches_count} cached SRE enrichments out of {len(cached_sre)} cache entries (match rate: {matches_count/total_rows*100:.1f}% of offerings).")
+
+        for r in self.rows:
+            self._sync_row_indexador(r)
+
         try:
             with zipfile.ZipFile(zip_filepath, "r") as z:
                 dt = z.getinfo("oferta_resolucao_160.csv").date_time
                 self.last_update = datetime(*dt).strftime("%d/%m/%Y %H:%M:%S") + " (CVM Oficial)"
         except Exception:
-            mtime = os.path.getmtime(zip_filepath) if os.path.exists(zip_filepath) else datetime.now().timestamp()
+            mtime = os.path.getmtime(zip_filepath) if (zip_filepath and os.path.exists(str(zip_filepath))) else datetime.now().timestamp()
             self.last_update = datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M:%S") + " (CVM Oficial)"
         self._build_options_cache()
+        self._start_sre_background_worker()
         print(f"Data engine loaded {len(self.rows)} offerings successfully.")
+        self._log_top_coordenadores()
 
     def _build_options_cache(self):
         anos = sorted(list(set(r["Ano"] for r in self.rows)), reverse=True)
@@ -579,16 +1114,171 @@ class CVMDataEngine:
         status_list = sorted(list(set(r["Status"] for r in self.rows if r["Status"] != "Não Informado")))
         indexadores = ["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)", "Outros / Não Informado"]
         
+        valid_dates = sorted(list(set(str(r.get("Data_Clean", ""))[:7] for r in self.rows if len(str(r.get("Data_Clean", ""))) >= 7 and str(r.get("Data_Clean", ""))[:4].isdigit())))
+        data_min = valid_dates[0] if valid_dates else "2023-01"
+        data_max = valid_dates[-1] if valid_dates else "2026-07"
+        
+        std_ativos = ["Debêntures", "CRI", "CRA", "FIDC", "Nota Comercial", "CPR", "FII", "Ações"]
+        ordered_ativos = ["Todos"] + std_ativos + [a for a in ativos if len(a) > 1 and a not in std_ativos][:35]
+        
         self.options_cache = {
             "anos": ["Recentes (2023-2026)", "Todos"] + anos[:20],
             "ritos": ["Todos", "Automático", "Ordinário"],
-            "ativos": ["Todos"] + [a for a in ativos if len(a) > 1][:35],
+            "ativos": ordered_ativos,
             "status": ["Todos"] + status_list[:15],
             "indexadores": indexadores,
-            "publicos": ["Todos", "Profissional", "Qualificado", "Geral"]
+            "publicos": ["Todos", "Profissional", "Qualificado", "Geral"],
+            "data_min": data_min,
+            "data_max": data_max
         }
 
-    def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", busca=""):
+    def _start_sre_background_worker(self):
+        import threading
+        if hasattr(self, "_worker_started") and self._worker_started:
+            return
+        self._worker_started = True
+        
+        def worker_loop():
+            import time
+            import json
+            import urllib.request
+            import ssl
+            sre_cache_path = os.path.join(CACHE_DIR, "sre_enrichment_cache.json")
+            cached_sre = {}
+            if os.path.exists(sre_cache_path):
+                try:
+                    with open(sre_cache_path, "r", encoding="utf-8") as f:
+                        cached_sre = json.load(f)
+                except Exception:
+                    pass
+            
+            candidates = [
+                r for r in self.rows
+                if r.get("Ano") in ("2026", "2025", "2024", "2023")
+                and (not r.get("Taxa_Declarada") or not r.get("Vencimento") or r.get("Vencimento") == "N/I" or r.get("Referencia_NTNB") in ("Outras / Não Espec.", "N/I", ""))
+                and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
+                and r.get("Indexador") in ("CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)")
+            ]
+            candidates.sort(key=lambda x: x.get("Volume_Float", 0), reverse=True)
+            
+            ctx = ssl.create_default_context()
+            def _fetch_api_sre(req_id):
+                try:
+                    api_url = f"https://web.cvm.gov.br/sre-publico-cvm/rest/sitePublico/pesquisar/requerimento/{req_id}"
+                    req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, context=ctx, timeout=2.0) as resp:
+                        if resp.status == 200:
+                            data = json.loads(resp.read().decode("utf-8"))
+                            taxa_encontrada = None
+                            campos_encontrados = []
+                            venc_encontrado = None
+                            if data.get("grupos"):
+                                for g in data["grupos"]:
+                                    for s in g.get("series", []):
+                                        for lote_key in ("loteFinal", "loteInicial"):
+                                            lote = s.get(lote_key)
+                                            if lote and isinstance(lote, dict):
+                                                if not campos_encontrados and lote.get("camposCadastrados"):
+                                                    campos_encontrados = lote["camposCadastrados"]
+                                                t = lote.get("taxaRemuneracao", "")
+                                                if t and str(t).strip() and str(t).strip() not in ("-", "--", "Não Informado", "0", "0%"):
+                                                    taxa_encontrada = str(t).strip()
+                                                if lote.get("camposCadastrados"):
+                                                    for c in lote["camposCadastrados"]:
+                                                        nm = str(c.get("campoNome", "")).lower()
+                                                        val = str(c.get("campoValor", "")).strip()
+                                                        if not taxa_encontrada and any(k in nm for k in ("remuneração final", "remuneração máxima", "taxa de remuneração", "juros")):
+                                                            if val and val not in ("-", "--", "Não Informado", "0", "0%"):
+                                                                taxa_encontrada = val
+                                                        if not venc_encontrado and ("venc" in nm or "data de vencimento" in nm):
+                                                            if val and val not in ("-", "--", "00/00/0000", "Não Informado"):
+                                                                venc_encontrado = val
+                                                if taxa_encontrada and campos_encontrados and venc_encontrado: break
+                                            if taxa_encontrada and campos_encontrados and venc_encontrado: break
+                            return taxa_encontrada, campos_encontrados, venc_encontrado
+                except Exception:
+                    pass
+                return None, [], None
+
+            def _apply_row_update(r, taxa_e, campos_e, venc_e, req_id):
+                updated = False
+                if taxa_e or campos_e or venc_e:
+                    if taxa_e:
+                        r["Taxa_Juros"] = taxa_e
+                        r["Taxa_Declarada"] = True
+                        r["Remuneracao_API_CVM"] = taxa_e
+                        updated = True
+                    if campos_e:
+                        r["Caracteristicas_CVM"] = campos_e
+                        updated = True
+                    if venc_e:
+                        if len(venc_e) >= 10 and venc_e[2] == "/":
+                            parts = venc_e.split("/")
+                            r["Vencimento"] = f"{parts[1]}/{parts[2][-2:]}"
+                        elif len(venc_e) >= 10 and venc_e[4] == "-":
+                            parts = venc_e.split("-")
+                            r["Vencimento"] = f"{parts[1]}/{parts[0][-2:]}"
+                        elif len(venc_e) >= 7 and venc_e[2] == "/":
+                            r["Vencimento"] = f"{venc_e[:2]}/{venc_e[-2:]}"
+                        else:
+                            r["Vencimento"] = venc_e[:7]
+                        updated = True
+                    self._sync_row_indexador(r)
+                    ref, fonte = self._extract_ntnb_reference(r)
+                    r["Referencia_NTNB"] = ref
+                    r["NTNB_Fonte"] = fonte
+                    cached_sre[req_id] = {
+                        "Taxa_Juros": taxa_e,
+                        "Vencimento": r.get("Vencimento"),
+                        "Caracteristicas_CVM": campos_e
+                    }
+                return updated
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _save_sre_cache():
+                try:
+                    tmp_p = sre_cache_path + ".tmp"
+                    with open(tmp_p, "w", encoding="utf-8") as f:
+                        json.dump(cached_sre, f, ensure_ascii=False)
+                    os.replace(tmp_p, sre_cache_path)
+                except Exception:
+                    pass
+
+            top_batch = [r for r in candidates[:300] if str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip() not in cached_sre]
+            updated_count = 0
+            if top_batch:
+                with ThreadPoolExecutor(max_workers=10) as ex:
+                    futs = {}
+                    for r in top_batch:
+                        rid = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+                        if rid and rid.isdigit():
+                            futs[ex.submit(_fetch_api_sre, rid)] = (r, rid)
+                    for f in as_completed(futs):
+                        r, rid = futs[f]
+                        tx, cp, vn = f.result()
+                        if _apply_row_update(r, tx, cp, vn, rid):
+                            updated_count += 1
+                if updated_count > 0:
+                    _save_sre_cache()
+
+            for r in candidates[300:]:
+                req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+                if not req_id or not req_id.isdigit() or req_id in cached_sre:
+                    continue
+                tx, cp, vn = _fetch_api_sre(req_id)
+                if _apply_row_update(r, tx, cp, vn, req_id):
+                    updated_count += 1
+                    if updated_count % 15 == 0:
+                        _save_sre_cache()
+                time.sleep(0.04)
+
+            if updated_count > 0:
+                _save_sre_cache()
+        
+        t = threading.Thread(target=worker_loop, daemon=True)
+        t.start()
+
+    def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", busca="", data_de="", data_ate=""):
         def _to_list(val):
             if isinstance(val, (list, tuple, set)):
                 if not val:
@@ -615,6 +1305,10 @@ class CVMDataEngine:
         reg_list = _to_list(regime)
         busca_lower = busca.lower() if busca else ""
         
+        has_date_range = bool((data_de and str(data_de).strip() not in ("Todos", "")) or (data_ate and str(data_ate).strip() not in ("Todos", "")))
+        de_str = str(data_de).strip()[:7] if (data_de and str(data_de).strip() not in ("Todos", "")) else ""
+        ate_str = str(data_ate).strip()[:7] if (data_ate and str(data_ate).strip() not in ("Todos", "")) else ""
+        
         res = []
         for r in self.rows:
             if "Todos" not in reg_list:
@@ -625,7 +1319,14 @@ class CVMDataEngine:
                     elif reg_item.lower() in r["Regime"].lower(): match_reg = True; break
                 if not match_reg: continue
             
-            if "Todos" not in ano_list:
+            if has_date_range:
+                r_dt = str(r.get("Data_Clean", ""))[:7]
+                if len(r_dt) >= 7 and r_dt[:4].isdigit():
+                    if de_str and r_dt < de_str: continue
+                    if ate_str and r_dt > ate_str: continue
+                else:
+                    continue
+            elif "Todos" not in ano_list:
                 match_ano = False
                 for a in ano_list:
                     if a == "Recentes (2023-2026)" and r["Ano"] in ("2023", "2024", "2025", "2026"): match_ano = True; break
@@ -644,6 +1345,8 @@ class CVMDataEngine:
                     elif ("CRI" in at_upper or "IMOBILI" in at_upper) and ("CRI" in r_at_upper or "IMOBILI" in r_at_upper): match_at = True; break
                     elif ("CRA" in at_upper or "AGRONEG" in at_upper) and ("CRA" in r_at_upper or "AGRONEG" in r_at_upper): match_at = True; break
                     elif ("FIDC" in at_upper or "CREDIT" in at_upper) and ("FIDC" in r_at_upper or "CREDIT" in r_at_upper): match_at = True; break
+                    elif ("CPR" in at_upper or "CÉDULA DE PRODUTO RURAL" in at_upper or "CEDULA DE PRODUTO RURAL" in at_upper or "PRODUTO RURAL" in at_upper) and ("CPR" in r_at_upper or "PRODUTO RURAL" in r_at_upper or "CÉDULA DE PRODUTO RURAL" in r_at_upper or "CEDULA DE PRODUTO RURAL" in r_at_upper): match_at = True; break
+                    elif ("NOTA COMERCIAL" in at_upper or "NOTAS COMERCIAIS" in at_upper or "PROMISS" in at_upper or "NC" == at_upper) and ("NOTA COMERCIAL" in r_at_upper or "NOTAS COMERCIAIS" in r_at_upper or "PROMISS" in r_at_upper): match_at = True; break
                     elif r["Ativo"] == at or at_upper in r_at_upper: match_at = True; break
                 if not match_at: continue
                 
@@ -659,6 +1362,7 @@ class CVMDataEngine:
             if busca_lower:
                 if (busca_lower not in r["Emissor"].lower() and 
                     busca_lower not in r["Lider"].lower() and 
+                    busca_lower not in str(r.get("Consorcio", "")).lower() and
                     busca_lower not in r["Id_Processo"].lower() and
                     busca_lower not in r["Ativo"].lower() and
                     busca_lower not in r["Status"].lower()):

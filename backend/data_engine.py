@@ -1150,8 +1150,25 @@ class CVMDataEngine:
                 total_rows = max(len(self.rows), 1)
                 print(f"Applied {matches_count} cached SRE enrichments out of {len(cached_sre)} cache entries (match rate: {matches_count/total_rows*100:.1f}% of offerings).")
 
+        consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
+        consorcio_cache = {}
+        if os.path.exists(consorcio_cache_path):
+            try:
+                import json
+                with open(consorcio_cache_path, "r", encoding="utf-8") as f:
+                    consorcio_cache = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] Consorcio cache load error: {e}")
+
         for r in self.rows:
             self._sync_row_indexador(r)
+            req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+            if req_id and req_id in consorcio_cache:
+                r["Coordenadores_Todos"] = consorcio_cache[req_id]
+            else:
+                r["Coordenadores_Todos"] = {}
+            r["_ym"] = str(r.get("Data_Clean", ""))[:7]
+            r["_busca"] = f"{r.get('Emissor','')} {r.get('Lider','')} {r.get('Consorcio','')} {r.get('Id_Processo','')} {r.get('Ativo','')} {r.get('Status','')}".lower()
 
         try:
             with zipfile.ZipFile(zip_filepath, "r") as z:
@@ -1301,36 +1318,29 @@ class CVMDataEngine:
                 except Exception:
                     pass
 
-            top_batch = [r for r in candidates[:300] if str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip() not in cached_sre]
             updated_count = 0
-            if top_batch:
-                with ThreadPoolExecutor(max_workers=10) as ex:
-                    futs = {}
-                    for r in top_batch:
-                        rid = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
-                        if rid and rid.isdigit():
-                            futs[ex.submit(_fetch_api_sre, rid)] = (r, rid)
-                    for f in as_completed(futs):
-                        r, rid = futs[f]
-                        tx, cp, vn = f.result()
-                        if _apply_row_update(r, tx, cp, vn, rid):
-                            updated_count += 1
-                if updated_count > 0:
+            batch_size = 20
+            for i in range(0, len(candidates), batch_size):
+                batch = candidates[i:i + batch_size]
+                batch_updated = False
+                for r in batch:
+                    req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+                    if not req_id or not req_id.isdigit() or req_id in cached_sre:
+                        continue
+                    tx, cp, vn = _fetch_api_sre(req_id)
+                    if _apply_row_update(r, tx, cp, vn, req_id):
+                        updated_count += 1
+                        batch_updated = True
+                        if updated_count % 200 == 0:
+                            _save_sre_cache()
+                    time.sleep(0.05)
+                if batch_updated and updated_count % 200 == 0:
                     _save_sre_cache()
-
-            for r in candidates[300:]:
-                req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
-                if not req_id or not req_id.isdigit() or req_id in cached_sre:
-                    continue
-                tx, cp, vn = _fetch_api_sre(req_id)
-                if _apply_row_update(r, tx, cp, vn, req_id):
-                    updated_count += 1
-                    if updated_count % 15 == 0:
-                        _save_sre_cache()
-                time.sleep(0.04)
+                time.sleep(0.5)
 
             if updated_count > 0:
                 _save_sre_cache()
+
         
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
@@ -1370,8 +1380,7 @@ class CVMDataEngine:
         
         res = []
         for r in self.rows:
-            # Global constraint: unconditionally ignore all emissions prior to 01/2023 (2023-01)
-            r_dt = str(r.get("Data_Clean", ""))[:7]
+            r_dt = r.get("_ym") or str(r.get("Data_Clean", ""))[:7]
             r_ano = str(r.get("Ano", "")).strip()
             if len(r_dt) >= 7 and r_dt[:4].isdigit():
                 if r_dt < "2023-01": continue
@@ -1386,7 +1395,7 @@ class CVMDataEngine:
                 if not match_reg: continue
             
             if has_date_range:
-                r_dt = str(r.get("Data_Clean", ""))[:7]
+                r_dt = r.get("_ym") or str(r.get("Data_Clean", ""))[:7]
                 if len(r_dt) >= 7 and r_dt[:4].isdigit():
                     if r_dt < "2023-01": continue
                     if de_str and r_dt < de_str: continue
@@ -1427,12 +1436,7 @@ class CVMDataEngine:
                 if not any(pb.lower() in r["Publico_Alvo"].lower() for pb in pub_list): continue
             
             if busca_lower:
-                if (busca_lower not in r["Emissor"].lower() and 
-                    busca_lower not in r["Lider"].lower() and 
-                    busca_lower not in str(r.get("Consorcio", "")).lower() and
-                    busca_lower not in r["Id_Processo"].lower() and
-                    busca_lower not in r["Ativo"].lower() and
-                    busca_lower not in r["Status"].lower()):
+                if busca_lower not in (r.get("_busca") or f"{r.get('Emissor','')} {r.get('Lider','')} {r.get('Consorcio','')} {r.get('Id_Processo','')} {r.get('Ativo','')} {r.get('Status','')}").lower():
                     continue
             
             res.append(r)

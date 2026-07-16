@@ -1206,6 +1206,31 @@ class CVMDataEngine:
             "data_max": data_max
         }
 
+    def save_single_sre_cache(self, req_id: str, taxa: str, vencimento: str, caracteristicas: list):
+        if not req_id:
+            return
+        try:
+            import json, os
+            sre_cache_path = os.path.join(CACHE_DIR, "sre_enrichment_cache.json")
+            cached = {}
+            if os.path.exists(sre_cache_path):
+                try:
+                    with open(sre_cache_path, "r", encoding="utf-8") as f:
+                        cached = json.load(f)
+                except Exception:
+                    pass
+            cached[req_id] = {
+                "Taxa_Juros": taxa,
+                "Vencimento": vencimento,
+                "Caracteristicas_CVM": caracteristicas
+            }
+            tmp_p = sre_cache_path + ".tmp"
+            with open(tmp_p, "w", encoding="utf-8") as f:
+                json.dump(cached, f, ensure_ascii=False)
+            os.replace(tmp_p, sre_cache_path)
+        except Exception:
+            pass
+
     def _start_sre_background_worker(self):
         import threading
         if hasattr(self, "_worker_started") and self._worker_started:
@@ -1323,23 +1348,28 @@ class CVMDataEngine:
             for i in range(0, len(candidates), batch_size):
                 batch = candidates[i:i + batch_size]
                 batch_updated = False
-                for r in batch:
+                
+                def _process_one(r):
                     req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
                     if not req_id or not req_id.isdigit() or req_id in cached_sre:
-                        continue
+                        return False
                     tx, cp, vn = _fetch_api_sre(req_id)
-                    if _apply_row_update(r, tx, cp, vn, req_id):
+                    return _apply_row_update(r, tx, cp, vn, req_id)
+                
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    results = list(executor.map(_process_one, batch))
+                
+                for res in results:
+                    if res:
                         updated_count += 1
                         batch_updated = True
-                        if updated_count % 200 == 0:
-                            _save_sre_cache()
-                    time.sleep(0.05)
-                if batch_updated and updated_count % 200 == 0:
+                        
+                if batch_updated and updated_count >= 20:
                     _save_sre_cache()
-                time.sleep(0.5)
+                    updated_count = 0
+                time.sleep(0.2)
 
-            if updated_count > 0:
-                _save_sre_cache()
+            _save_sre_cache()
 
         
         t = threading.Thread(target=worker_loop, daemon=True)

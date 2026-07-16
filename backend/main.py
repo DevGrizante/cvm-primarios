@@ -89,7 +89,7 @@ def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
         
     with _SRE_LOCK:
         if req_id in _SRE_NEGATIVE_CACHE:
-            if time.time() - _SRE_NEGATIVE_CACHE[req_id] < 14400:
+            if time.time() - _SRE_NEGATIVE_CACHE[req_id] < 600:
                 return r
             else:
                 del _SRE_NEGATIVE_CACHE[req_id]
@@ -157,14 +157,14 @@ def _enrich_offer_from_api(r: dict, timeout: float = 1.4):
                 r["Referencia_NTNB"] = ref
                 r["NTNB_Fonte"] = fonte
                 engine._sync_row_indexador(r)
+                engine.save_single_sre_cache(req_id, taxa_encontrada or r.get("Taxa_Juros"), r.get("Vencimento"), campos_encontrados or r.get("Caracteristicas_CVM"))
             else:
                 engine._sync_row_indexador(r)
         else:
             with _SRE_LOCK:
                 _SRE_NEGATIVE_CACHE[req_id] = time.time()
     except Exception:
-        with _SRE_LOCK:
-            _SRE_NEGATIVE_CACHE[req_id] = time.time()
+        pass
         
     return r
 
@@ -834,6 +834,15 @@ def get_offers(
     total = len(rows)
     end = start + page_size
     paginated = rows[start:end]
+    
+    candidates = [
+        r for r in paginated
+        if (not r.get("Taxa_Juros") or r.get("Taxa_Juros") in ("N/I", "(Ver Dossiê / API CVM)", "-", "") or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
+        and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
+    ]
+    if candidates:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(lambda x: _enrich_offer_from_api(x, timeout=3.5), candidates[:12]))
             
     return {
         "total": total,
@@ -879,6 +888,16 @@ def get_search(
     total = len(results)
     start = (page_val - 1) * limit_val
     paginated = results[start:start + limit_val]
+    
+    candidates = [
+        r for r in paginated
+        if (not r.get("Taxa_Juros") or r.get("Taxa_Juros") in ("N/I", "(Ver Dossiê / API CVM)", "-", "") or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
+        and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
+    ]
+    if candidates:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(lambda x: _enrich_offer_from_api(x, timeout=3.5), candidates[:12]))
+            
     return {
         "total": total,
         "page": page_val,

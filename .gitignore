@@ -1,24 +1,24 @@
-# Logs
-logs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+backend/data_cache/*.zip
+backend/data_cache/*.csv
+!backend/data_cache/sre_enrichment_cache.json
+*.zip
 *.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Dependency directories
+.DS_Store
 node_modules/
-jspm_packages/
+# dist/  <-- removed: dist is now committed so Render doesn't need Node.js to build
+*.db
+*.sqlite
+scratch_npm/
 
-# Production build output
-dist/
-build/
+*.tmp
+*.temp
 
-# Cache
-.eslintcache
-.vite/
+PASTAS_PRONTAS_PARA_O_GITHUB/

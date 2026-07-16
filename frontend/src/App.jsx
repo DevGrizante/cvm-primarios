@@ -598,6 +598,8 @@ const App = () => {
     const [activeTab, setActiveTab] = useState("explorer");
     const [showAllLeaders, setShowAllLeaders] = useState(false);
     const [showAllIssuers, setShowAllIssuers] = useState(false);
+    const [modoCoordenador, setModoCoordenador] = useState("lider");
+    const dashboardCacheRef = useRef({});
     
     const [kpis, setKpis] = useState(null);
     const [overviewCharts, setOverviewCharts] = useState(null);
@@ -665,7 +667,7 @@ const App = () => {
         window.history.pushState({ path: newUrl }, "", newUrl);
     }, [filters, searchQuery, sortBy, sortOrder, currentPage]);
 
-    // Unified Debounced Data Fetch with AbortController
+    // Unified Debounced Data Fetch with AbortController and frontend caching
     useEffect(() => {
         if (!backendReady) return;
         const controller = new AbortController();
@@ -673,6 +675,21 @@ const App = () => {
         setLoading(true);
 
         const timer = setTimeout(() => {
+            const dashboardParams = new URLSearchParams({
+                ano: filters.ano,
+                rito: filters.rito,
+                ativo: filters.ativo,
+                status: filters.status,
+                indexador: filters.indexador,
+                publico: filters.publico,
+                regime: filters.regime,
+                busca: searchQuery,
+                incluir_estimados: filters.incluir_estimados ? "true" : "false",
+                modo_coordenador: modoCoordenador,
+                ...(filters.data_de && { data_de: filters.data_de }),
+                ...(filters.data_ate && { data_ate: filters.data_ate })
+            }).toString();
+
             const queryParams = new URLSearchParams({
                 ano: filters.ano,
                 rito: filters.rito,
@@ -691,25 +708,24 @@ const App = () => {
                 ...(filters.data_ate && { data_ate: filters.data_ate })
             }).toString();
 
-            fetch(`${API_BASE}/kpis?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setKpis(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em KPIs:", err); });
-
-            fetch(`${API_BASE}/charts/overview?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setOverviewCharts(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em charts overview:", err); });
-
-            fetch(`${API_BASE}/charts/investors?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setInvestorCharts(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em charts investors:", err); });
-
-            fetch(`${API_BASE}/rankings?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setRankings(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em rankings:", err); });
+            if (dashboardCacheRef.current[dashboardParams]) {
+                const res = dashboardCacheRef.current[dashboardParams];
+                setKpis(res.kpis);
+                setOverviewCharts(res.charts_overview);
+                setInvestorCharts(res.investors);
+                setRankings(res.rankings);
+            } else {
+                fetch(`${API_BASE}/dashboard?${dashboardParams}`, { signal })
+                    .then(r => r.json())
+                    .then(res => {
+                        dashboardCacheRef.current[dashboardParams] = res;
+                        setKpis(res.kpis);
+                        setOverviewCharts(res.charts_overview);
+                        setInvestorCharts(res.investors);
+                        setRankings(res.rankings);
+                    })
+                    .catch(err => { if (err.name !== "AbortError") console.error("Erro no Dashboard:", err); });
+            }
 
             fetch(`${API_BASE}/offers?${queryParams}`, { signal })
                 .then(r => r.json())
@@ -723,13 +739,13 @@ const App = () => {
                         setLoading(false);
                     }
                 });
-        }, 350); // 350ms debounce
+        }, 320); // 320ms debounce
 
         return () => {
             clearTimeout(timer);
             controller.abort();
         };
-    }, [backendReady, filters, searchQuery, currentPage, pageSize, sortBy, sortOrder]);
+    }, [backendReady, filters, searchQuery, currentPage, pageSize, sortBy, sortOrder, modoCoordenador]);
 
     const handleFilterChange = (key, val) => {
         setFilters(prev => ({ ...prev, [key]: val }));
@@ -1673,13 +1689,26 @@ const App = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {overviewCharts.top_coordenadores && (
                                 <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2">
-                                        <h3 className="text-base font-bold text-white font-display">Coordenadores Líderes por Volume Registrado (R$ Bi)</h3>
-                                        <button 
-                                            onClick={() => setShowAllLeaders(!showAllLeaders)}
-                                            className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
-                                            {showAllLeaders ? "Ver Top 10" : "Ver Todos"}
-                                        </button>
+                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2 flex-wrap">
+                                        <h3 className="text-base font-bold text-white font-display">Coordenadores por Volume Registrado (R$ Bi)</h3>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => setModoCoordenador(modoCoordenador === "lider" ? "todos" : "lider")}
+                                                title="Alternar entre apenas Coordenador Líder ou todos os Coordenadores do Consórcio"
+                                                className={`px-2.5 py-1 text-xs font-mono rounded-lg transition-all border ${
+                                                    modoCoordenador === "todos"
+                                                        ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-600 hover:text-white"
+                                                        : "bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white"
+                                                }`}
+                                            >
+                                                {modoCoordenador === "todos" ? "Consórcio (Todos)" : "Apenas Líder"}
+                                            </button>
+                                            <button 
+                                                onClick={() => setShowAllLeaders(!showAllLeaders)}
+                                                className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
+                                                {showAllLeaders ? "Ver Top 10" : "Ver Todos"}
+                                            </button>
+                                        </div>
                                     </div>
                                     <div className={showAllLeaders ? "max-h-[440px] overflow-y-auto pr-2 custom-scrollbar" : ""}>
                                         <ChartWrapper

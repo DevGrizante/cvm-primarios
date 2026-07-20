@@ -230,16 +230,41 @@ def startup_event():
     threading.Thread(target=_load_and_clear, daemon=True).start()
 
 
-@app.get("/api/ready")
-def get_ready():
-    """Returns loading status so the frontend can show a loading screen."""
-    is_ready = len(engine.rows) > 0
+@app.get("/api/bootstrap")
+def get_bootstrap():
+    """Returns the granular boot state for the loading screen."""
     return {
-        "ready": is_ready,
+        "pronto": getattr(engine, "boot_state", {}).get("pronto", False),
+        "fase": getattr(engine, "boot_state", {}).get("fase", "Iniciando"),
+        "progresso": getattr(engine, "boot_state", {}).get("progresso", 0),
+        "dataset_version": getattr(engine, "dataset_version", ""),
         "rows_count": len(engine.rows),
-        "last_update": engine.last_update,
-        "message": "Dados carregados com sucesso." if is_ready else "Carregando dados CVM em background... Aguarde."
+        "last_update": engine.last_update
     }
+
+@app.get("/api/dataset")
+def get_dataset(request: Request):
+    """Returns the full columnar dataset as a pre-compressed GZip stream with ETag caching."""
+    if not getattr(engine, "boot_state", {}).get("pronto", False) or not getattr(engine, "columnar_dataset", None):
+        return JSONResponse(status_code=503, content={"detail": "Dataset still building"})
+        
+    client_etag = request.headers.get("if-none-match")
+    current_etag = getattr(engine, "dataset_version", "")
+    
+    if client_etag == current_etag and current_etag:
+        from fastapi import Response
+        return Response(status_code=304)
+        
+    from fastapi.responses import Response
+    return Response(
+        content=engine.columnar_dataset,
+        media_type="application/json",
+        headers={
+            "Content-Encoding": "gzip",
+            "Cache-Control": "private, max-age=300",
+            "ETag": current_etag
+        }
+    )
 
 @app.get("/api/status")
 def get_status():
@@ -837,15 +862,6 @@ def get_offers(
     total = len(rows)
     end = start + page_size
     paginated = rows[start:end]
-    
-    candidates = [
-        r for r in paginated
-        if (not r.get("Taxa_Juros") or any(k in str(r.get("Taxa_Juros")) for k in ("N/I", "Ver Dossiê", "Ver Regulamento", "Não Informado", "-")) or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
-        and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
-    ]
-    if candidates:
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            list(executor.map(lambda x: _enrich_offer_from_api(x, timeout=3.5), candidates[:12]))
             
     return {
         "total": total,
@@ -891,15 +907,6 @@ def get_search(
     total = len(results)
     start = (page_val - 1) * limit_val
     paginated = results[start:start + limit_val]
-    
-    candidates = [
-        r for r in paginated
-        if (not r.get("Taxa_Juros") or any(k in str(r.get("Taxa_Juros")) for k in ("N/I", "Ver Dossiê", "Ver Regulamento", "Não Informado", "-")) or not r.get("Vencimento") or r.get("Vencimento") in ("N/I", "-", ""))
-        and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
-    ]
-    if candidates:
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            list(executor.map(lambda x: _enrich_offer_from_api(x, timeout=3.5), candidates[:12]))
             
     return {
         "total": total,

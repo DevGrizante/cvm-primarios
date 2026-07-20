@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { filtrar, calcularKpis, calcularChartsOverview, calcularInvestors, calcularRankings, exportToCsv } from './dataEngine';
-import { filtrar, calcularKpis, calcularChartsOverview, calcularInvestors, calcularRankings, exportToCsv } from './dataEngine';
 import {
     Chart,
     CategoryScale,

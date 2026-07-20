@@ -613,9 +613,6 @@ const App = () => {
   const datasetRef = useRef(null);
   const datasetVersionRef = useRef(null);
   const [datasetLoaded, setDatasetLoaded] = useState(false);
-const datasetRef = useRef(null);
-const datasetVersionRef = useRef(null);
-const [datasetLoaded, setDatasetLoaded] = useState(false);
     const [loadingMsg, setLoadingMsg] = useState("Inicializando servidor...");
     const [sortBy, setSortBy] = useState(getInitialUrlParams().get("sort_by") || "Data_Clean");
     const [sortOrder, setSortOrder] = useState(getInitialUrlParams().get("sort_order") || "desc");

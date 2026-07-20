@@ -21,9 +21,16 @@ NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 205
 class CVMDataEngine:
     def __init__(self):
         self.rows = []
+        self.columnar_dataset = None
+        self.dataset_version = ""
         self.last_update = None
         self.options_cache = {}
         self._scheduler_started = False
+        self.boot_state = {
+            "fase": "Iniciando",
+            "progresso": 0,
+            "pronto": False
+        }
 
     def _ultimo_slot(self, agora=None):
         if agora is None:
@@ -171,6 +178,8 @@ class CVMDataEngine:
             return False
 
     def ensure_data(self):
+        self.boot_state["fase"] = "Iniciando verificação de cache"
+        self.boot_state["progresso"] = 5
         os.makedirs(CACHE_DIR, exist_ok=True)
         source_zip = None
         if not self.needs_refresh():
@@ -180,6 +189,8 @@ class CVMDataEngine:
                 source_zip = SCRATCH_ZIP
 
         if not source_zip:
+            self.boot_state["fase"] = "Baixando base CVM"
+            self.boot_state["progresso"] = 10
             print("Downloading latest CVM dataset from official portal...")
             # Try multiple download strategies in order
             download_attempts = [
@@ -200,7 +211,24 @@ class CVMDataEngine:
                 elif os.path.exists(SCRATCH_ZIP) and os.path.getsize(SCRATCH_ZIP) > 50000:
                     source_zip = SCRATCH_ZIP
 
+        if not source_zip:
+            self.boot_state["fase"] = "Aguardando dados CVM (Falha no Download)"
+            self.boot_state["progresso"] = 0
+            self.boot_state["pronto"] = False
+            return
+
+        self.boot_state["fase"] = "Extraindo e Processando ofertas"
+        self.boot_state["progresso"] = 30
         self.load_from_zip(source_zip)
+        
+        self.boot_state["fase"] = "Montando Dataset Colunar"
+        self.boot_state["progresso"] = 95
+        self._build_columnar_dataset()
+        
+        self.boot_state["fase"] = "Pronto"
+        self.boot_state["progresso"] = 100
+        self.boot_state["pronto"] = True
+
         self._start_scheduler_worker()
 
 
@@ -1472,4 +1500,64 @@ class CVMDataEngine:
             res.append(r)
         return res
 
+
+    def _build_columnar_dataset(self):
+        import gzip
+        import json
+        import hashlib
+        
+        cols = [
+            'id', 'data', 'ano', 'emissor', 'setor_ativo', 'indexador', 
+            'taxa', 'volume', 'estimado', 'lider', 'status', 'rito', 
+            'regime', 'publico', 'ntnb', 'ntnb_fonte', 'vencimento', 
+            'esg', 'vol_pf', 'vol_fd', 'vol_est', 'vol_prev', 'vol_seg', 
+            'vol_inst', 'aloc_pendente', 'cnpj_emissor'
+        ]
+        
+        rows_colunares = []
+        for r in self.rows:
+            # Optimize nulls/empty strings to None or empty to save bytes
+            r_id = r.get('Numero_Requerimento') or r.get('Id_Processo') or ''
+            rows_colunares.append([
+                r_id,
+                r.get('Data_Clean', ''),
+                r.get('Ano', ''),
+                r.get('Emissor', ''),
+                r.get('Ativo', ''),
+                r.get('Indexador', ''),
+                r.get('Taxa_Juros', ''),
+                r.get('Volume_Float', 0.0),
+                bool(r.get('Taxa_Declarada', False)),
+                r.get('Lider', ''),
+                r.get('Status', ''),
+                r.get('Rito', ''),
+                r.get('Regime', ''),
+                r.get('Publico_Alvo', ''),
+                r.get('Referencia_NTNB', ''),
+                r.get('NTNB_Fonte', ''),
+                r.get('Vencimento', ''),
+                r.get('ESG', 'Não'),
+                r.get('Vol_Pessoa_Fisica', 0.0),
+                r.get('Vol_Fundos', 0.0),
+                r.get('Vol_Estrangeiro', 0.0),
+                r.get('Vol_Previdencia', 0.0),
+                r.get('Vol_Seguradora', 0.0),
+                r.get('Vol_Institucional', 0.0),
+                r.get('Alocacao_Pendente', 0.0),
+                r.get('CNPJ_Emissor', '')
+            ])
+            
+        dataset = {
+            'cols': cols,
+            'rows': rows_colunares
+        }
+        
+        json_bytes = json.dumps(dataset, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        gzipped = gzip.compress(json_bytes, compresslevel=6) # Balanced speed/compression
+        
+        # Calculate dataset version hash
+        self.dataset_version = hashlib.md5((str(self.last_update) + str(len(self.rows))).encode()).hexdigest()[:8]
+        self.columnar_dataset = gzipped
+        
+        print(f'[DATASET] Columnar dataset built: {len(self.rows)} rows. Compressed size: {len(gzipped)/1024/1024:.2f} MB')
 engine = CVMDataEngine()

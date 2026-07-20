@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { filtrar, calcularKpis, calcularChartsOverview, calcularInvestors, calcularRankings, exportToCsv } from './dataEngine';
+import { filtrar, calcularKpis, calcularChartsOverview, calcularInvestors, calcularRankings, exportToCsv } from './dataEngine';
 import {
     Chart,
     CategoryScale,
@@ -598,6 +600,8 @@ const App = () => {
     const [activeTab, setActiveTab] = useState("explorer");
     const [showAllLeaders, setShowAllLeaders] = useState(false);
     const [showAllIssuers, setShowAllIssuers] = useState(false);
+    const [modoCoordenador, setModoCoordenador] = useState("lider");
+    const dashboardCacheRef = useRef({});
     
     const [kpis, setKpis] = useState(null);
     const [overviewCharts, setOverviewCharts] = useState(null);
@@ -607,33 +611,67 @@ const App = () => {
     const [selectedOffer, setSelectedOffer] = useState(null);
     const [loading, setLoading] = useState(true);
     const [backendReady, setBackendReady] = useState(false);
+  const datasetRef = useRef(null);
+  const datasetVersionRef = useRef(null);
+  const [datasetLoaded, setDatasetLoaded] = useState(false);
+const datasetRef = useRef(null);
+const datasetVersionRef = useRef(null);
+const [datasetLoaded, setDatasetLoaded] = useState(false);
     const [loadingMsg, setLoadingMsg] = useState("Inicializando servidor...");
     const [sortBy, setSortBy] = useState(getInitialUrlParams().get("sort_by") || "Data_Clean");
     const [sortOrder, setSortOrder] = useState(getInitialUrlParams().get("sort_order") || "desc");
 
-    // Poll /api/ready until backend has finished loading data
-    useEffect(() => {
-        let cancelled = false;
-        const poll = async () => {
-            try {
-                const r = await fetch(API_BASE + "/ready");
-                if (!r.ok) throw new Error("not ok");
-                const d = await r.json();
-                if (d.ready) {
-                    if (!cancelled) setBackendReady(true);
-                    return;
-                }
-                if (!cancelled) {
-                    setLoadingMsg(d.message || "Carregando dados CVM...");
-                    setTimeout(poll, 3000);
-                }
-            } catch {
-                if (!cancelled) setTimeout(poll, 4000);
+    // Poll /api/bootstrap and fetch dataset
+  useEffect(() => {
+    let cancelled = false;
+    let timerId = null;
+
+    const checkBootstrap = async () => {
+      try {
+        const r = await fetch(API_BASE + "/bootstrap");
+        if (!r.ok) throw new Error("not ok");
+        const d = await r.json();
+        
+        if (d.pronto) {
+          if (!cancelled) {
+            setBackendReady(true);
+            setLoadingMsg(`Carregando base de dados (${(d.rows_count/1000).toFixed(0)}k emissões)...`);
+            
+            // Check if we need to load dataset
+            if (datasetVersionRef.current !== d.dataset_version) {
+              const dsRes = await fetch(API_BASE + "/dataset");
+              if (dsRes.ok) {
+                const dsJson = await dsRes.json();
+                // Hydrate columnar to objects
+                const cols = dsJson.cols;
+                const objects = dsJson.rows.map(row => {
+                  const obj = {};
+                  cols.forEach((c, i) => obj[c] = row[i]);
+                  return obj;
+                });
+                datasetRef.current = objects;
+                datasetVersionRef.current = d.dataset_version;
+                setDatasetLoaded(true);
+              }
             }
-        };
-        poll();
-        return () => { cancelled = true; };
-    }, []);
+          }
+          
+          // Poll again every 5 mins for updates
+          if (!cancelled) timerId = setTimeout(checkBootstrap, 300000);
+          return;
+        }
+        
+        if (!cancelled) {
+          setLoadingMsg(`[${d.progresso}%] ${d.fase}`);
+          timerId = setTimeout(checkBootstrap, 1500);
+        }
+      } catch {
+        if (!cancelled) timerId = setTimeout(checkBootstrap, 4000);
+      }
+    };
+    checkBootstrap();
+    return () => { cancelled = true; clearTimeout(timerId); };
+  }, []);
 
     // Fetch System Status
     useEffect(() => {
@@ -665,71 +703,47 @@ const App = () => {
         window.history.pushState({ path: newUrl }, "", newUrl);
     }, [filters, searchQuery, sortBy, sortOrder, currentPage]);
 
-    // Unified Debounced Data Fetch with AbortController
-    useEffect(() => {
-        if (!backendReady) return;
-        const controller = new AbortController();
-        const signal = controller.signal;
-        setLoading(true);
+  // Local Data Engine using useMemo
+  const filteredRows = useMemo(() => {
+    if (!datasetLoaded || !datasetRef.current) return [];
+    return filtrar(datasetRef.current, { ...filters, busca: searchQuery });
+  }, [datasetLoaded, filters, searchQuery]);
 
-        const timer = setTimeout(() => {
-            const queryParams = new URLSearchParams({
-                ano: filters.ano,
-                rito: filters.rito,
-                ativo: filters.ativo,
-                status: filters.status,
-                indexador: filters.indexador,
-                publico: filters.publico,
-                regime: filters.regime,
-                busca: searchQuery,
-                incluir_estimados: filters.incluir_estimados ? "true" : "false",
-                page: currentPage,
-                page_size: pageSize,
-                sort_by: sortBy,
-                sort_order: sortOrder,
-                ...(filters.data_de && { data_de: filters.data_de }),
-                ...(filters.data_ate && { data_ate: filters.data_ate })
-            }).toString();
+  useEffect(() => {
+    if (!datasetLoaded) return;
+    setLoading(true);
+    // Use timeout to allow UI to render loading state before heavy JS blocks main thread
+    const t = setTimeout(() => {
+      try {
+        setKpis(calcularKpis(filteredRows));
+        setOverviewCharts(calcularChartsOverview(filteredRows));
+        setInvestorCharts(calcularInvestors(filteredRows));
+        setRankings(calcularRankings(filteredRows));
+        
+        // Sorting and Pagination
+        let sorted = [...filteredRows];
+        const reverse = sortOrder === "desc";
+        if (sortBy === "Volume_Float") sorted.sort((a,b) => reverse ? b.volume - a.volume : a.volume - b.volume);
+        else if (sortBy === "Data_Clean") sorted.sort((a,b) => reverse ? String(b.data || "").localeCompare(a.data || "") : String(a.data || "").localeCompare(b.data || ""));
+        else if (sortBy === "Emissor") sorted.sort((a,b) => reverse ? String(b.emissor || "").localeCompare(a.emissor || "") : String(a.emissor || "").localeCompare(b.emissor || ""));
+        else if (sortBy === "Status") sorted.sort((a,b) => reverse ? String(b.status || "").localeCompare(a.status || "") : String(a.status || "").localeCompare(b.status || ""));
 
-            fetch(`${API_BASE}/kpis?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setKpis(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em KPIs:", err); });
-
-            fetch(`${API_BASE}/charts/overview?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setOverviewCharts(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em charts overview:", err); });
-
-            fetch(`${API_BASE}/charts/investors?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setInvestorCharts(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em charts investors:", err); });
-
-            fetch(`${API_BASE}/rankings?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => setRankings(res))
-                .catch(err => { if (err.name !== "AbortError") console.error("Erro em rankings:", err); });
-
-            fetch(`${API_BASE}/offers?${queryParams}`, { signal })
-                .then(r => r.json())
-                .then(res => {
-                    setOffersData(res);
-                    setLoading(false);
-                })
-                .catch(err => {
-                    if (err.name !== "AbortError") {
-                        console.error("Erro ao carregar ofertas:", err);
-                        setLoading(false);
-                    }
-                });
-        }, 350); // 350ms debounce
-
-        return () => {
-            clearTimeout(timer);
-            controller.abort();
-        };
-    }, [backendReady, filters, searchQuery, currentPage, pageSize, sortBy, sortOrder]);
+        const total = sorted.length;
+        const start = (currentPage - 1) * pageSize;
+        const paginated = sorted.slice(start, start + pageSize);
+        
+        setOffersData({
+            items: paginated,
+            total,
+            page: currentPage,
+            total_pages: Math.ceil(total / pageSize) || 1
+        });
+      } finally {
+        setLoading(false);
+      }
+    }, 50);
+    return () => clearTimeout(t);
+  }, [filteredRows, currentPage, pageSize, sortBy, sortOrder, datasetLoaded]);
 
     const handleFilterChange = (key, val) => {
         setFilters(prev => ({ ...prev, [key]: val }));
@@ -784,21 +798,10 @@ const App = () => {
         }
     };
 
-    const handleExport = () => {
-        const queryParams = new URLSearchParams({
-            ano: filters.ano,
-            rito: filters.rito,
-            ativo: filters.ativo,
-            status: filters.status,
-            indexador: filters.indexador,
-            publico: filters.publico,
-            regime: filters.regime,
-            busca: searchQuery,
-            ...(filters.data_de && { data_de: filters.data_de }),
-            ...(filters.data_ate && { data_ate: filters.data_ate })
-        }).toString();
-        window.open(`${API_BASE}/export?${queryParams}`, "_blank");
-    };
+  const handleExport = () => {
+    if (!datasetLoaded) return;
+    exportToCsv(filteredRows);
+  };
 
     const handleDrawerNavigate = (direction) => {
         if (!selectedOffer || !offersData.items.length) return;
@@ -1673,13 +1676,26 @@ const App = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {overviewCharts.top_coordenadores && (
                                 <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2">
-                                        <h3 className="text-base font-bold text-white font-display">Coordenadores Líderes por Volume Registrado (R$ Bi)</h3>
-                                        <button 
-                                            onClick={() => setShowAllLeaders(!showAllLeaders)}
-                                            className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
-                                            {showAllLeaders ? "Ver Top 10" : "Ver Todos"}
-                                        </button>
+                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2 flex-wrap">
+                                        <h3 className="text-base font-bold text-white font-display">Coordenadores por Volume Registrado (R$ Bi)</h3>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => setModoCoordenador(modoCoordenador === "lider" ? "todos" : "lider")}
+                                                title="Alternar entre apenas Coordenador Líder ou todos os Coordenadores do Consórcio"
+                                                className={`px-2.5 py-1 text-xs font-mono rounded-lg transition-all border ${
+                                                    modoCoordenador === "todos"
+                                                        ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-600 hover:text-white"
+                                                        : "bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white"
+                                                }`}
+                                            >
+                                                {modoCoordenador === "todos" ? "Consórcio (Todos)" : "Apenas Líder"}
+                                            </button>
+                                            <button 
+                                                onClick={() => setShowAllLeaders(!showAllLeaders)}
+                                                className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
+                                                {showAllLeaders ? "Ver Top 10" : "Ver Todos"}
+                                            </button>
+                                        </div>
                                     </div>
                                     <div className={showAllLeaders ? "max-h-[440px] overflow-y-auto pr-2 custom-scrollbar" : ""}>
                                         <ChartWrapper

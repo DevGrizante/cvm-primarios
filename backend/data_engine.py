@@ -1,6 +1,156 @@
 import os
 import re
 import csv
+
+import functools
+import pickle
+import gzip
+import hashlib
+import concurrent.futures
+import json
+import time
+import unicodedata
+
+SCHEMA_VERSION = 3
+
+
+_ACCENTS = {
+    'Á':'A', 'À':'A', 'Â':'A', 'Ã':'A', 'Ä':'A',
+    'É':'E', 'È':'E', 'Ê':'E', 'Ë':'E',
+    'Í':'I', 'Ì':'I', 'Î':'I', 'Ï':'I',
+    'Ó':'O', 'Ò':'O', 'Ô':'O', 'Õ':'O', 'Ö':'O',
+    'Ú':'U', 'Ù':'U', 'Û':'U', 'Ü':'U',
+    'Ç':'C', 'Ñ':'N',
+    'á':'a', 'à':'a', 'â':'a', 'ã':'a', 'ä':'a',
+    'é':'e', 'è':'e', 'ê':'e', 'ë':'e',
+    'í':'i', 'ì':'i', 'î':'i', 'ï':'i',
+    'ó':'o', 'ò':'o', 'ô':'o', 'õ':'o', 'ö':'o',
+    'ú':'u', 'ù':'u', 'û':'u', 'ü':'u',
+    'ç':'c', 'ñ':'n'
+}
+_ACCENT_MAP = str.maketrans(_ACCENTS)
+_RE_SUFIXOS = re.compile(r'\b(S[./ ]?A\.?|LTDA\.?|CTVM|CCTVM|DTVM|BANCO DE INVESTIMENTO|INVESTIMENTO|INVESTIMENTOS|SA)\b', re.IGNORECASE)
+
+# Module-level Regexes
+_RE_NTNB_1 = re.compile(r'NTN-?\s*B\s*(\d{2})\b')
+_RE_NTNB_2 = re.compile(r'NTN-?\s*B\s*(\d{4})\b')
+_RE_NTNB_3 = re.compile(r'NTN-?\s*B\s*\d{1,2}/\d{1,2}/(\d{4})')
+_RE_NTNB_4 = re.compile(r'TESOURO\s+IPCA\+?\s*.*?(\d{4})')
+_RE_NTNB_5 = re.compile(r'(?:VENCIMENTO|VENCE)\s+(?:DA\s+)?NTN-?\s*B\s+(?:EM\s+)?(\d{4})')
+_RE_NTNB_6 = re.compile(r'\bB\s*-?\s*(\d{2})\b')
+_RE_SPREAD_CDI = re.compile(r'([\+\s\(]\d+[\d,.]*)\s*%|(\d+[\d,.]*)\s*%|(\d+[\d,.]*)\s*(?:aa|a\.a\.)', re.I)
+
+# Module-level Tuples for fast `in` checks
+_TUPLE_NTNB = ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLAÇÃO", "INFLACAO")
+_TUPLE_CDI = ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %", "DI+", "TAXA DI")
+_TUPLE_PRE = ("PRÉ", "PRE ", "PREFIX", "TAXA PRÉ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS")
+_TUPLE_BLACKLIST = frozenset([
+    "VALORES MOBILIARIOS", "TITULOS E VALORES MOBILIARIOS", "CORRETORA DE TITULOS E VALORES MOBILIARIOS",
+    "DISTRIBUIDORA DE TITULOS E VALORES MOBILIARIOS", "CAMBIO TITULOS E VALORES MOBILIARIOS",
+    "CAMBIO, TITULOS E VALORES MOBILIARIOS", "TITULOS E VALORES MOBILIARIOS S.A.",
+    "VALORES MOBILIARIOS S.A.", "VALORES", "TITULOS", "CAMBIO", "CORRETORA DE CAMBIO",
+    "COORDENADOR PLENO", "SECURITIZADORA", "ADMINISTRADOR DE CARTEIRA", "NAO INFORMADO",
+    "DISTRIBUIDORA DE TITULOS", "VALORES MOBILIARIOS SA"
+])
+
+@functools.lru_cache(maxsize=65536)
+def _clean_text_cached(text):
+    if not text:
+        return ""
+    if text == "N/A" or text == "---" or text == "--":
+        return "Não Informado"
+    t = str(text).strip()
+    replacements = {
+        "Debntures": "Debêntures",
+        "DEBNTURES": "Debêntures",
+        "Certificados de Recebveis Imobilirios": "CRI",
+        "Certificados de Recebíveis Imobiliários": "CRI",
+        "CERTIFICADOS DE RECEBVEIS IMOBILIRIOS - CRI": "CRI",
+        "CERTIFICADO DE RECEBVEIS IMOBILIRIOS": "CRI",
+        "Certificados de Recebveis do Agronegcio": "CRA",
+        "Certificados de Recebíveis do Agronegócio": "CRA",
+        "CERTIFICADOS DE RECEBVEIS DO AGRONEGCIO - CRA": "CRA",
+        "Cotas de FII": "FII",
+        "QUOTAS DE FUNDO IMOBILIRIO": "FII",
+        "AES ORDINRIAS": "Ações Ordinárias",
+        "AES PREFERENCIAIS": "Ações Preferenciais",
+        "Aes": "Ações",
+        "Automtico": "Automático",
+        "Ordinrio": "Ordinário",
+        "PRIMRIA": "Primária",
+        "SECUNDRIA": "Secundária",
+        "MISTA": "Mista",
+        "PRIMARIA": "Primária",
+        "SECUNDARIA": "Secundária",
+        "Direitos creditrios": "Direitos Creditórios"
+    }
+    for k, v in replacements.items():
+        if k in t:
+            t = t.replace(k, v)
+    return t
+
+@functools.lru_cache(maxsize=8192)
+def _normalize_coordenador_cached(nome):
+    if not nome: 
+        return ""
+    if str(nome).strip() in ("Não Informado", "", "None", "Não informado"):
+        return "Não Informado"
+    
+    s = _clean_text_cached(str(nome)).upper()
+    s = s.translate(_ACCENT_MAP)
+    s = " ".join(s.split())
+    
+    if s in _TUPLE_BLACKLIST or s.startswith("VALORES MOBILIARIOS") or s == "VALORES MOBILIARIOS":
+        return "Não Informado"
+        
+    if s.startswith("BANCO "):
+        s = s[6:].strip()
+        
+    s = _RE_SUFIXOS.sub('', s).strip()
+    
+    aliases = {
+        "ITAU BBA": "ITAÚ BBA",
+        "BANCO ITAU BBA": "ITAÚ BBA",
+        "ITAU UNIBANCO": "ITAÚ BBA",
+        "ITAU": "ITAÚ BBA",
+        "BTG PACTUAL": "BTG PACTUAL",
+        "BTG INVESTMENT BANKING": "BTG PACTUAL",
+        "BANCO BTG PACTUAL": "BTG PACTUAL",
+        "BTG": "BTG PACTUAL",
+        "BRADESCO BBI": "BRADESCO BBI",
+        "BANCO BRADESCO BBI": "BRADESCO BBI",
+        "BRADESCO": "BRADESCO BBI",
+        "XP INVESTIMENTOS": "XP INVESTIMENTOS",
+        "XP": "XP INVESTIMENTOS",
+        "SANTANDER (BRASIL)": "BANCO SANTANDER (BRASIL)",
+        "SANTANDER": "BANCO SANTANDER (BRASIL)",
+        "BANCO SANTANDER": "BANCO SANTANDER (BRASIL)",
+        "BANCO SANTANDER (BRASIL)": "BANCO SANTANDER (BRASIL)",
+        "UBS BRASIL": "UBS BRASIL",
+        "UBS BB": "UBS BRASIL",
+        "UBS": "UBS BRASIL",
+        "SAFRA": "BANCO SAFRA",
+        "BANCO SAFRA": "BANCO SAFRA",
+        "GENIAL": "GENIAL",
+        "ORAMA": "ÓRAMA"
+    }
+    
+    if s in aliases:
+        return aliases[s]
+    for k, v in aliases.items():
+        if k == s or (len(k) > 4 and k in s and "BANCO" not in k and k not in ("ITAU", "BTG", "UBS", "XP")):
+            return v
+    return s
+
+def _get_zip_md5(zip_path):
+    if not os.path.exists(zip_path):
+        return None
+    h = hashlib.md5()
+    with open(zip_path, 'rb') as f:
+        while chunk := f.read(8192*1024):
+            h.update(chunk)
+    return h.hexdigest()
+
 import zipfile
 import io
 import urllib.request
@@ -14,6 +164,7 @@ from collections import defaultdict
 
 ZIP_URL = "https://dados.cvm.gov.br/dados/OFERTA/DISTRIB/DADOS/oferta_distribuicao.zip"
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
+PROCESSED_STATE_PATH = os.path.join(CACHE_DIR, "processed_state.pkl.gz")
 ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
@@ -178,6 +329,7 @@ class CVMDataEngine:
             return False
 
     def ensure_data(self):
+        t0 = time.perf_counter()
         self.boot_state["fase"] = "Iniciando verificação de cache"
         self.boot_state["progresso"] = 5
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -187,6 +339,31 @@ class CVMDataEngine:
                 source_zip = ZIP_PATH
             elif os.path.exists(SCRATCH_ZIP):
                 source_zip = SCRATCH_ZIP
+
+        if source_zip:
+            # Check Pickle Cache
+            self.boot_state["fase"] = "Verificando hash do ZIP"
+            zip_md5 = _get_zip_md5(source_zip)
+            if zip_md5 and os.path.exists(PROCESSED_STATE_PATH):
+                try:
+                    with gzip.open(PROCESSED_STATE_PATH, 'rb') as f:
+                        state = pickle.load(f)
+                    if state.get("schema_version") == SCHEMA_VERSION and state.get("zip_md5") == zip_md5:
+                        self.rows = state.get("rows", [])
+                        self.columnar_dataset = state.get("columnar_dataset", {})
+                        self.columnar_gzip = state.get("columnar_gzip", b"")
+                        self.last_update = state.get("last_update", "")
+                        
+                        self._build_options_cache()
+                        self.boot_state["fase"] = "Pronto"
+                        self.boot_state["progresso"] = 100
+                        self.boot_state["pronto"] = True
+                        dur = time.perf_counter() - t0
+                        print(f"[BOOT] Estado processado restaurado via Pickle em {dur:.2f}s (MD5: {zip_md5})")
+                        self._start_scheduler_worker()
+                        return
+                except Exception as e:
+                    print(f"[WARN] Failed to load processed state: {e}")
 
         if not source_zip:
             self.boot_state["fase"] = "Baixando base CVM"
@@ -217,14 +394,14 @@ class CVMDataEngine:
             self.boot_state["pronto"] = False
             return
 
+
         self.boot_state["fase"] = "Extraindo e Processando ofertas"
         self.boot_state["progresso"] = 30
+        
+        t_load = time.perf_counter()
         self.load_from_zip(source_zip)
-        
-        self.boot_state["fase"] = "Montando Dataset Colunar"
-        self.boot_state["progresso"] = 95
-        self._build_columnar_dataset()
-        
+        print(f"[BOOT] fase=load_from_zip dur={time.perf_counter()-t_load:.2f}s")
+
         self.boot_state["fase"] = "Pronto"
         self.boot_state["progresso"] = 100
         self.boot_state["pronto"] = True
@@ -232,37 +409,10 @@ class CVMDataEngine:
         self._start_scheduler_worker()
 
 
+
+
     def _clean_text(self, text):
-        if not text or text == "N/A" or text == "" or text == "---" or text == "--":
-            return "Não Informado"
-        t = str(text).strip()
-        replacements = {
-            "Debntures": "Debêntures",
-            "DEBNTURES": "Debêntures",
-            "Certificados de Recebveis Imobilirios": "CRI",
-            "Certificados de Recebíveis Imobiliários": "CRI",
-            "CERTIFICADOS DE RECEBVEIS IMOBILIRIOS - CRI": "CRI",
-            "CERTIFICADO DE RECEBVEIS IMOBILIRIOS": "CRI",
-            "Certificados de Recebveis do Agronegcio": "CRA",
-            "Certificados de Recebíveis do Agronegócio": "CRA",
-            "CERTIFICADOS DE RECEBVEIS DO AGRONEGCIO - CRA": "CRA",
-            "Cotas de FII": "FII",
-            "QUOTAS DE FUNDO IMOBILIRIO": "FII",
-            "AES ORDINRIAS": "Ações Ordinárias",
-            "AES PREFERENCIAIS": "Ações Preferenciais",
-            "Aes": "Ações",
-            "Automtico": "Automático",
-            "Ordinrio": "Ordinário",
-            "PRIMRIA": "Primária",
-            "SECUNDRIA": "Secundária",
-            "MISTA": "Mista",
-            "PRIMARIA": "Primária",
-            "SECUNDARIA": "Secundária",
-            "Direitos creditrios": "Direitos Creditórios"
-        }
-        for k, v in replacements.items():
-            t = t.replace(k, v)
-        return t
+        return _clean_text_cached(text) or "Não Informado"
 
     def _extract_coordenadores(self, r):
         lider_raw = r.get("Lider", "Não Informado")
@@ -301,63 +451,9 @@ class CVMDataEngine:
         consorcio_str = " / ".join(candidates) if len(candidates) > 1 else lider_norm
         return lider_norm, consorcio_str, candidates
 
+
     def _normalize_coordenador(self, nome):
-        if not nome or str(nome).strip() in ("Não Informado", "", "None", "Não informado"):
-            return "Não Informado"
-        s = self._clean_text(str(nome)).upper()
-        s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-        s = " ".join(s.split())
-        
-        blacklist_fragments = {
-            "VALORES MOBILIARIOS", "TITULOS E VALORES MOBILIARIOS", "CORRETORA DE TITULOS E VALORES MOBILIARIOS",
-            "DISTRIBUIDORA DE TITULOS E VALORES MOBILIARIOS", "CAMBIO TITULOS E VALORES MOBILIARIOS",
-            "CAMBIO, TITULOS E VALORES MOBILIARIOS", "TITULOS E VALORES MOBILIARIOS S.A.",
-            "VALORES MOBILIARIOS S.A.", "VALORES", "TITULOS", "CAMBIO", "CORRETORA DE CAMBIO",
-            "COORDENADOR PLENO", "SECURITIZADORA", "ADMINISTRADOR DE CARTEIRA", "NAO INFORMADO",
-            "DISTRIBUIDORA DE TITULOS", "VALORES MOBILIARIOS SA"
-        }
-        if s in blacklist_fragments or s.startswith("VALORES MOBILIARIOS") or s == "VALORES MOBILIARIOS":
-            return "Não Informado"
-        
-        if s.startswith("BANCO "):
-            s = s[6:].strip()
-            
-        for suf in (" S.A.", " S/A", " LTDA.", " LTDA", " CTVM", " CCTVM", " DTVM", " DE INVESTIMENTO", " INVESTIMENTO", " INVESTIMENTOS", " S.A", " SA"):
-            if s.endswith(suf):
-                s = s[:-len(suf)].strip()
-                
-        aliases = {
-            "ITAU BBA": "ITAÚ BBA",
-            "BANCO ITAU BBA": "ITAÚ BBA",
-            "ITAU UNIBANCO": "ITAÚ BBA",
-            "ITAU": "ITAÚ BBA",
-            "BTG PACTUAL": "BTG PACTUAL",
-            "BTG INVESTMENT BANKING": "BTG PACTUAL",
-            "BANCO BTG PACTUAL": "BTG PACTUAL",
-            "BTG": "BTG PACTUAL",
-            "BRADESCO BBI": "BRADESCO BBI",
-            "BANCO BRADESCO BBI": "BRADESCO BBI",
-            "BRADESCO": "BRADESCO BBI",
-            "XP INVESTIMENTOS": "XP INVESTIMENTOS",
-            "XP": "XP INVESTIMENTOS",
-            "SANTANDER (BRASIL)": "BANCO SANTANDER (BRASIL)",
-            "SANTANDER": "BANCO SANTANDER (BRASIL)",
-            "BANCO SANTANDER": "BANCO SANTANDER (BRASIL)",
-            "BANCO SANTANDER (BRASIL)": "BANCO SANTANDER (BRASIL)",
-            "UBS BRASIL": "UBS BRASIL",
-            "UBS BB": "UBS BRASIL",
-            "UBS": "UBS BRASIL",
-            "SAFRA": "BANCO SAFRA",
-            "BANCO SAFRA": "BANCO SAFRA",
-            "GENIAL": "GENIAL",
-            "ORAMA": "ÓRAMA"
-        }
-        if s in aliases:
-            return aliases[s]
-        for k, v in aliases.items():
-            if k == s or (len(k) > 4 and k in s and "BANCO" not in k and k not in ("ITAU", "BTG", "UBS", "XP")):
-                return v
-        return s
+        return _normalize_coordenador_cached(nome) or "Não Informado"
 
     def _parse_float(self, val):
         if not val or val == "N/A":
@@ -584,37 +680,36 @@ class CVMDataEngine:
                 return "Taxa Prefixada a Definir", False
             return "Não Informado (CVM)", False
 
+
     def _sync_row_indexador(self, r):
-        import re
         taxa = str(r.get("Taxa_Juros", "")).strip()
         t_upper = taxa.upper()
         caract_str = str(r.get("Caracteristicas_CVM", "")).upper()
         ref_ntnb = str(r.get("Referencia_NTNB", "")).strip()
-        
+
         has_ntnb_or_ipca = (
             (ref_ntnb and ref_ntnb not in ("Outras / Não Espec.", "", "None", "None"))
-            or any(k in t_upper for k in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INPC", "IGP-M", "IGPM", "TR ", "INFLA"))
+            or any(k in t_upper for k in _TUPLE_NTNB)
             or t_upper.startswith("IPCA") or t_upper.endswith(" IPCA")
-            or re.search(r'\b(?:IPCA|INPC|IGP-M|IGPM|INCC|TR|INFLAÇÃO|INFLACAO|IPCR|NTN\-?B|TESOURO\s+IPCA)\b', t_upper)
-            or any(k in caract_str for k in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLAÇÃO", "INFLACAO"))
+            or any(k in caract_str for k in _TUPLE_NTNB)
         )
-        
+
         if has_ntnb_or_ipca:
             r["Indexador"] = "IPCA / Inflação"
             r["Indexador_Inferido"] = False
             return
-            
+
         if not taxa or taxa in ("Não Informado (CVM)", "N/A", "-", "--", "Não Informado"):
             return
-        
-        has_cdi = any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %", "DI+", "TAXA DI")) or t_upper.startswith("DI ") or t_upper.endswith(" DI") or re.search(r'\b(?:CDI|DI|SELIC|FLUTUANTE|FLUTUANTES|OVER|ANBID|TJLP|LIBOR)\b', t_upper)
+
+        has_cdi = any(k in t_upper for k in _TUPLE_CDI) or t_upper.startswith("DI ") or t_upper.endswith(" DI")
         if has_cdi:
             r["Indexador"] = "CDI / DI"
             r["Indexador_Inferido"] = False
             return
 
-        has_pre_keyword = any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX", "TAXA PRÉ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS"))
-        if has_pre_keyword or re.search(r'\d+[\d,.]*\s*%', taxa) or any(k in t_upper for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE", "VALOR NOMINAL UNITÁRIO", "VALOR NOMINAL UNITARIO")):
+        has_pre_keyword = any(k in t_upper for k in _TUPLE_PRE)
+        if has_pre_keyword or _RE_SPREAD_CDI.search(taxa) or "INTEGRALIZ" in t_upper or "CONSTANTE" in t_upper or "UNITÁRIO" in t_upper or "UNITARIO" in t_upper:
             r["Indexador"] = "PRÉ (Prefixado)"
             r["Indexador_Inferido"] = False
 
@@ -878,7 +973,7 @@ class CVMDataEngine:
                         "Qtd_Inv_Previdencia": self._parse_int(r.get("Num_Invest_Entidade_Previdencia_Privada")),
                         "Qtd_Inv_Seguradoras": self._parse_int(r.get("Num_Invest_Companhia_Seguradora")),
                         "Qtd_Inv_Instituicoes": self._parse_int(r.get("Num_Invest_Instit_Intermed_Partic_Consorcio_Distrib")) + self._parse_int(r.get("Num_Invest_Demais_Instit_Financ")),
-                        "Demografia_Detalhada": self._build_demografia_detalhada(r, vol_float, qtde_float, is_hist=False),
+                        "Demografia_Detalhada": None,
                         "Processo_SEI": r.get("Processo_SEI", "Não informado"),
                         "Administrador": self._clean_text(r.get("Administrador")),
                         "Gestor": self._clean_text(r.get("Gestor")),
@@ -906,7 +1001,6 @@ class CVMDataEngine:
                     ref, fonte = self._extract_ntnb_reference(row_dict)
                     row_dict["Referencia_NTNB"] = ref
                     row_dict["NTNB_Fonte"] = fonte
-                    self._sync_row_indexador(row_dict)
                     unified.append(row_dict)
 
             # 2. Instrução 400/476 (Historical up to 2023)
@@ -971,7 +1065,7 @@ class CVMDataEngine:
                         "Qtd_Inv_Previdencia": self._parse_int(r.get("Nr_Entidade_Previdencia_Privada")),
                         "Qtd_Inv_Seguradoras": self._parse_int(r.get("Nr_Companhia_Seguradora")),
                         "Qtd_Inv_Instituicoes": self._parse_int(r.get("Nr_Demais_Pessoa_Juridica")),
-                        "Demografia_Detalhada": self._build_demografia_detalhada(r, vol_float, qtde_float, is_hist=True),
+                        "Demografia_Detalhada": None,
                         "Processo_SEI": "N/A",
                         "Administrador": "Não informado",
                         "Gestor": "Não informado",
@@ -999,7 +1093,6 @@ class CVMDataEngine:
                     ref, fonte = self._extract_ntnb_reference(row_dict)
                     row_dict["Referencia_NTNB"] = ref
                     row_dict["NTNB_Fonte"] = fonte
-                    self._sync_row_indexador(row_dict)
                     unified.append(row_dict)
             z.close()
         except Exception as e:
@@ -1209,6 +1302,29 @@ class CVMDataEngine:
         self._start_sre_background_worker()
         print(f"Data engine loaded {len(self.rows)} offerings successfully.")
         self._log_top_coordenadores()
+        # Build columnar and save to pickle!
+        t_col = time.perf_counter()
+        self._build_columnar_dataset()
+        print(f"[BOOT] fase=colunar dur={time.perf_counter()-t_col:.2f}s")
+
+        t_dump = time.perf_counter()
+        try:
+            state = {
+                "schema_version": SCHEMA_VERSION,
+                "zip_md5": _get_zip_md5(zip_filepath),
+                "rows": self.rows,
+                "columnar_dataset": self.columnar_dataset,
+                "columnar_gzip": self.columnar_gzip,
+                "last_update": self.last_update
+            }
+            tmp_path = PROCESSED_STATE_PATH + ".tmp"
+            with gzip.open(tmp_path, 'wb') as f:
+                pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_path, PROCESSED_STATE_PATH)
+            print(f"[BOOT] fase=dump_pickle dur={time.perf_counter()-t_dump:.2f}s")
+        except Exception as e:
+            print(f"[WARN] Could not dump processed state: {e}")
+
 
     def _build_options_cache(self):
         anos = sorted(list(set(r["Ano"] for r in self.rows)), reverse=True)
@@ -1557,7 +1673,8 @@ class CVMDataEngine:
         
         # Calculate dataset version hash
         self.dataset_version = hashlib.md5((str(self.last_update) + str(len(self.rows))).encode()).hexdigest()[:8]
-        self.columnar_dataset = gzipped
+        self.columnar_dataset = dataset
+        self.columnar_gzip = gzipped
         
         print(f'[DATASET] Columnar dataset built: {len(self.rows)} rows. Compressed size: {len(gzipped)/1024/1024:.2f} MB')
 engine = CVMDataEngine()

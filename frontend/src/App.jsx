@@ -658,7 +658,7 @@ const App = () => {
                   obj.Is_Estimated_Vol = obj.estimado;
                   obj.Taxa_Declarada = !obj.estimado;
                   obj.Lider = obj.lider;
-                  obj.Consorcio = obj.lider;
+                  obj.Consorcio = (obj.coordenadores_todos && obj.coordenadores_todos.length > 0) ? obj.coordenadores_todos.join('/') : obj.lider;
                   obj.Status = obj.status;
                   obj.Rito = obj.rito;
                   obj.Regime = obj.regime;

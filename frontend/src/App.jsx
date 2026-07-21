@@ -546,16 +546,29 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         <div>
                             <span className="text-slate-500 block">Coordenador / Consórcio</span>
                             <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>Líder: {offer.Lider}</span>
-                            {offer.Coordenadores_Lista && offer.Coordenadores_Lista.filter(c => c !== offer.Lider).length > 0 && (
-                                <div className="mt-1 space-y-0.5">
-                                    <span className="block text-[10px] text-slate-500 font-mono uppercase">Demais Coordenadores:</span>
-                                    {offer.Coordenadores_Lista.filter(c => c !== offer.Lider).map((c, i) => (
-                                        <span key={i} className="block text-[10px] text-slate-400 font-mono truncate" title={c}>
-                                            - {c}
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
+                            {(() => {
+                                const liderUpper = (offer.Lider || "").toUpperCase().trim();
+                                const demaisCoords = (offer.Coordenadores_Todos || []).filter(c => {
+                                    const coordUpper = (c || "").toUpperCase().trim();
+                                    if (!liderUpper || !coordUpper) return false;
+                                    return coordUpper !== liderUpper && !coordUpper.includes(liderUpper) && !liderUpper.includes(coordUpper);
+                                });
+                                
+                                if (demaisCoords.length === 0) return null;
+                                
+                                return (
+                                    <div className="mt-1 space-y-0.5">
+                                        <span className="block text-[10px] text-slate-500 font-mono uppercase mb-1">Demais Coordenadores:</span>
+                                        <div className="overflow-x-auto pb-1.5 max-w-full whitespace-nowrap">
+                                            {demaisCoords.map((c, i) => (
+                                                <span key={i} className="block text-[10px] text-slate-400 font-mono pr-2" title={c}>
+                                                    - {c}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
                         <div>
                             <span className="text-slate-500 block">Processo SEI / Rito</span>
@@ -671,6 +684,7 @@ const App = () => {
                   const coords = Array.isArray(obj.coordenadores_todos) ? obj.coordenadores_todos : [];
                   const lider = obj.lider || "";
                   obj.Consorcio = coords.length > 0 ? coords.join(' / ') : lider;
+                  obj.Coordenadores_Todos = coords;
                   obj.Status = obj.status;
                   obj.Rito = obj.rito;
                   obj.Regime = obj.regime;

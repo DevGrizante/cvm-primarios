@@ -18,7 +18,7 @@ ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 class CVMDataEngine:
     def __init__(self):
@@ -762,7 +762,7 @@ class CVMDataEngine:
             return
 
         # 3b. Taxa numérica PURA (sem nenhuma keyword de indexador): classificar por banda.
-        m_num = re.match(r"^(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)\s*%", taxa)
+        m_num = re.search(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)\s*%", taxa)
         if m_num:
             raw_num = m_num.group(1).replace(".", "").replace(",", ".") if "," in m_num.group(1) else m_num.group(1)
             try:

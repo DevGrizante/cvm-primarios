@@ -702,9 +702,7 @@ class CVMDataEngine:
             return
             
         # 2. CDI, DI -> CDI+
-        # Usando regex para garantir que DI seja palavra (ex: DI+, % DI) ou CDI para evitar matches incorretos como 'CONDIÇÕES'
-        # Mas para garantir que 'DI+0,72%' funcione (já que começa com DI), vamos usar word boundaries para DI ou CDI.
-        if "CDI" in t_upper or re.search(r'\bDI\b|DI\+', t_upper):
+        if re.search(r'\b(?:CDI|DI)\b', t_upper):
             r["Indexador"] = "CDI / DI"
             r["Indexador_Inferido"] = False
             return
@@ -1290,22 +1288,22 @@ class CVMDataEngine:
                 print(f"Applied {matches_count} cached SRE enrichments out of {len(cached_sre)} cache entries (match rate: {matches_count/total_rows*100:.1f}% of offerings).")
 
         consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
-        consorcio_cache = {}
+        self.consorcio_cache = {}
         if os.path.exists(consorcio_cache_path):
             try:
                 import json
                 with open(consorcio_cache_path, "r", encoding="utf-8") as f:
-                    consorcio_cache = json.load(f)
+                    self.consorcio_cache = json.load(f)
             except Exception as e:
                 print(f"[ERROR] Consorcio cache load error: {e}")
 
         for r in self.rows:
             self._sync_row_indexador(r)
             req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
-            if req_id and req_id in consorcio_cache:
-                r["Coordenadores_Todos"] = consorcio_cache[req_id]
+            if req_id and req_id in self.consorcio_cache:
+                r["Coordenadores_Todos"] = self.consorcio_cache[req_id]
             else:
-                r["Coordenadores_Todos"] = {}
+                r["Coordenadores_Todos"] = []
             r["_ym"] = str(r.get("Data_Clean", ""))[:7]
             r["_busca"] = f"{r.get('Emissor','')} {r.get('Lider','')} {r.get('Consorcio','')} {r.get('Id_Processo','')} {r.get('Ativo','')} {r.get('Status','')}".lower()
 
@@ -1501,7 +1499,7 @@ class CVMDataEngine:
                             r["Consorcio_List"] = norm_coords
                             r["Consorcio"] = " / ".join(norm_coords)
                             r["Lider"] = norm_coords[0]
-                            consorcio_cache[req_id] = norm_coords
+                            self.consorcio_cache[req_id] = norm_coords
                             r["Coordenadores_Todos"] = norm_coords
                             updated = True
                     ref, fonte = self._extract_ntnb_reference(r)
@@ -1522,6 +1520,14 @@ class CVMDataEngine:
                     with open(tmp_p, "w", encoding="utf-8") as f:
                         json.dump(cached_sre, f, ensure_ascii=False)
                     os.replace(tmp_p, sre_cache_path)
+                except Exception:
+                    pass
+                try:
+                    consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
+                    tmp_c = consorcio_cache_path + ".tmp"
+                    with open(tmp_c, "w", encoding="utf-8") as f:
+                        json.dump(self.consorcio_cache, f, ensure_ascii=False)
+                    os.replace(tmp_c, consorcio_cache_path)
                 except Exception:
                     pass
 

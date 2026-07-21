@@ -750,9 +750,9 @@ const App = () => {
     const t = setTimeout(() => {
       try {
         setKpis(calcularKpis(baseFilteredRows));
-        setOverviewCharts(calcularChartsOverview(filteredRows));
+        setOverviewCharts(calcularChartsOverview(filteredRows, modoCoordenador));
         setInvestorCharts(calcularInvestors(filteredRows));
-        setRankings(calcularRankings(filteredRows));
+        setRankings(calcularRankings(filteredRows, modoCoordenador));
         
         // Sorting and Pagination
         let sorted = [...filteredRows];
@@ -777,7 +777,7 @@ const App = () => {
       }
     }, 50);
     return () => clearTimeout(t);
-  }, [filteredRows, currentPage, pageSize, sortBy, sortOrder, datasetLoaded]);
+  }, [filteredRows, currentPage, pageSize, sortBy, sortOrder, datasetLoaded, modoCoordenador]);
 
     const handleFilterChange = (key, val) => {
         setFilters(prev => ({ ...prev, [key]: val }));
@@ -1792,6 +1792,7 @@ const App = () => {
                                                             callback: function(value) {
                                                                 let label = this.getLabelForValue(value);
                                                                 if (label && label.length > 25) {
+                                                                    // Omite as letras da direita e mantém a parte esquerda sempre aparente, com reticências
                                                                     return label.substr(0, 25) + '...';
                                                                 }
                                                                 return label;
@@ -1810,7 +1811,7 @@ const App = () => {
                 ))}
 
                 {/* Tab 3: Investor Demographics */}
-                {activeTab === "investors" && investorCharts?.demographics && (
+                {activeTab === "investors" && investorCharts?.alloc_pie && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="glass-card rounded-2xl p-6 space-y-4">
                             <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Demografia e Alocação de Investidores (R$ Bi)</h3>
@@ -1818,11 +1819,11 @@ const App = () => {
                                 type="bar"
                                 height={320}
                                 data={{
-                                    labels: investorCharts.demographics.labels || [],
+                                    labels: investorCharts.alloc_pie.labels || [],
                                     datasets: [{
                                         label: "Volume Alocado (R$ Bi)",
-                                        data: (investorCharts.demographics.values || []).map(v => (v / 1e9).toFixed(2)),
-                                        backgroundColor: ["#10B981", "#6366F1", "#3B82F6", "#8B5CF6"],
+                                        data: (investorCharts.alloc_pie.volumes || []).map(v => (v / 1e9).toFixed(2)),
+                                        backgroundColor: ["#10B981", "#6366F1", "#3B82F6", "#8B5CF6", "#F59E0B", "#EC4899"],
                                         borderRadius: 8
                                     }]
                                 }}
@@ -1842,10 +1843,10 @@ const App = () => {
                                 type="pie"
                                 height={320}
                                 data={{
-                                    labels: investorCharts.demographics.labels || [],
+                                    labels: investorCharts.alloc_pie.labels || [],
                                     datasets: [{
-                                        data: investorCharts.demographics.values || [],
-                                        backgroundColor: ["#10B981", "#6366F1", "#3B82F6", "#8B5CF6"]
+                                        data: investorCharts.alloc_pie.volumes || [],
+                                        backgroundColor: ["#10B981", "#6366F1", "#3B82F6", "#8B5CF6", "#F59E0B", "#EC4899"]
                                     }]
                                 }}
                                 options={{

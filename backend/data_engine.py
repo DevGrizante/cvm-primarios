@@ -128,53 +128,53 @@ class CVMDataEngine:
                         break
                     
                     for r in registros:
-                    dt = r.get('data') or ''
-                    if dt and len(dt) == 10:
-                        # DD/MM/YYYY -> YYYY-MM-DD
-                        dt_clean = f"{dt[6:10]}-{dt[3:5]}-{dt[0:2]}"
-                    else:
-                        dt_clean = ""
+                        dt = r.get('data') or ''
+                        if dt and len(dt) == 10:
+                            # DD/MM/YYYY -> YYYY-MM-DD
+                            dt_clean = f"{dt[6:10]}-{dt[3:5]}-{dt[0:2]}"
+                        else:
+                            dt_clean = ""
+                            
+                        ano = dt_clean[:4]
+                        if len(ano) != 4 or not ano.isdigit():
+                            continue
+                            
+                        vol_float = self._parse_float(r.get("valorTotalEmReais"))
                         
-                    ano = dt_clean[:4]
-                    if len(ano) != 4 or not ano.isdigit():
-                        continue
+                        # Usa idRequerimento como Numero_Requerimento para forçar o SRE enrichment
+                        req_id = r.get("idRequerimento") or "N/A"
                         
-                    vol_float = self._parse_float(r.get("valorTotalEmReais"))
-                    
-                    # Usa idRequerimento como Numero_Requerimento para forçar o SRE enrichment
-                    req_id = r.get("idRequerimento") or "N/A"
-                    
-                    row_dict = {
-                        "Id_Processo": r.get("numeroProcesso") or "N/A",
-                        "Numero_Requerimento": req_id,
-                        "Regime": "Resolução 160 (Moderno)",
-                        "Ano": ano,
-                        "Data_Clean": dt_clean,
-                        "Rito": "Ordinário" if not r.get("registroAutomatico") else "Automático",
-                        "Status": r.get("statusDaOferta") or "Registrada",
-                        "Emissor": r.get("nomeEmissor") or "N/A",
-                        "CNPJ_Emissor": r.get("cnpjEmissor") or "",
-                        "Lider": r.get("nomeCoordenadorLider") or "",
-                        "CNPJ_Lider": r.get("cnpjCoordenadorLider") or "",
-                        "Ativo": r.get("nomeValorMobiliario") or "",
-                        "Volume": vol_float,
-                        "Volume_Texto": r.get("valorTotalEmReais"),
-                        "Indexador_Tipo": "INDEFINIDO",
-                        "Indexador_Inferido": "0",
-                        "Taxa_Juros": 0.0,
-                        "Taxa_Declarada": "",
-                        "Vencimento_Clean": "",
-                        "Demografia_Detalhada": [],
-                        "Vol_Pessoa_Fisica": 0.0,
-                        "Vol_Fundos": 0.0,
-                        "Vol_Estrangeiro": 0.0,
-                        "Vol_Previdencia": 0.0,
-                        "Vol_Seguradoras": 0.0,
-                        "Vol_Instituicoes": 0.0,
-                        "_ym": dt_clean[:7],
-                        "_is_hist": False
-                    }
-                    novas.append(row_dict)
+                        row_dict = {
+                            "Id_Processo": r.get("numeroProcesso") or "N/A",
+                            "Numero_Requerimento": req_id,
+                            "Regime": "Resolução 160 (Moderno)",
+                            "Ano": ano,
+                            "Data_Clean": dt_clean,
+                            "Rito": "Ordinário" if not r.get("registroAutomatico") else "Automático",
+                            "Status": r.get("statusDaOferta") or "Registrada",
+                            "Emissor": r.get("nomeEmissor") or "N/A",
+                            "CNPJ_Emissor": r.get("cnpjEmissor") or "",
+                            "Lider": r.get("nomeCoordenadorLider") or "",
+                            "CNPJ_Lider": r.get("cnpjCoordenadorLider") or "",
+                            "Ativo": r.get("nomeValorMobiliario") or "",
+                            "Volume": vol_float,
+                            "Volume_Texto": r.get("valorTotalEmReais"),
+                            "Indexador_Tipo": "INDEFINIDO",
+                            "Indexador_Inferido": "0",
+                            "Taxa_Juros": 0.0,
+                            "Taxa_Declarada": "",
+                            "Vencimento_Clean": "",
+                            "Demografia_Detalhada": [],
+                            "Vol_Pessoa_Fisica": 0.0,
+                            "Vol_Fundos": 0.0,
+                            "Vol_Estrangeiro": 0.0,
+                            "Vol_Previdencia": 0.0,
+                            "Vol_Seguradoras": 0.0,
+                            "Vol_Instituicoes": 0.0,
+                            "_ym": dt_clean[:7],
+                            "_is_hist": False
+                        }
+                        novas.append(row_dict)
                 if len(registros) < 200:
                     break
                 pagina += 1
@@ -690,35 +690,28 @@ class CVMDataEngine:
         import re
         taxa = str(r.get("Taxa_Juros", "")).strip()
         t_upper = taxa.upper()
-        caract_str = str(r.get("Caracteristicas_CVM", "")).upper()
-        ref_ntnb = str(r.get("Referencia_NTNB", "")).strip()
         
-        has_ntnb_or_ipca = (
-            (ref_ntnb and ref_ntnb not in ("Outras / Não Espec.", "", "None", "None"))
-            or any(k in t_upper for k in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INPC", "IGP-M", "IGPM", "TR ", "INFLA"))
-            or t_upper.startswith("IPCA") or t_upper.endswith(" IPCA")
-            or re.search(r'\b(?:IPCA|INPC|IGP-M|IGPM|INCC|TR|INFLAÇÃO|INFLACAO|IPCR|NTN\-?B|TESOURO\s+IPCA)\b', t_upper)
-            or any(k in caract_str for k in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLAÇÃO", "INFLACAO"))
-        )
-        
-        if has_ntnb_or_ipca:
+        if not taxa or taxa in ("Nao Informado (CVM)", "Não Informado (CVM)", "N/A", "-", "--", "Nao Informado", "Não Informado"):
+            return
+            
+        # Regra solicitada:
+        # 1. IPCA, NTNB, NTN-B -> IPCA+
+        if "IPCA" in t_upper or "NTNB" in t_upper or "NTN-B" in t_upper:
             r["Indexador"] = "IPCA / Inflação"
             r["Indexador_Inferido"] = False
             return
             
-        if not taxa or taxa in ("Não Informado (CVM)", "N/A", "-", "--", "Não Informado"):
-            return
-        
-        has_cdi = any(k in t_upper for k in ("CDI", " DI ", " DI+", " DI-", "% DI", "SELIC", "FLUTUANTE", "DI %", "DI+", "TAXA DI")) or t_upper.startswith("DI ") or t_upper.endswith(" DI") or re.search(r'\b(?:CDI|DI|SELIC|FLUTUANTE|FLUTUANTES|OVER|ANBID|TJLP|LIBOR)\b', t_upper)
-        if has_cdi:
+        # 2. CDI, DI -> CDI+
+        # Usando regex para garantir que DI seja palavra (ex: DI+, % DI) ou CDI para evitar matches incorretos como 'CONDIÇÕES'
+        # Mas para garantir que 'DI+0,72%' funcione (já que começa com DI), vamos usar word boundaries para DI ou CDI.
+        if "CDI" in t_upper or re.search(r'\bDI\b|DI\+', t_upper):
             r["Indexador"] = "CDI / DI"
             r["Indexador_Inferido"] = False
             return
-
-        has_pre_keyword = any(k in t_upper for k in ("PRÉ", "PRE ", "PREFIX", "TAXA PRÉ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS"))
-        if has_pre_keyword or re.search(r'\d+[\d,.]*\s*%', taxa) or any(k in t_upper for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE", "VALOR NOMINAL UNITÁRIO", "VALOR NOMINAL UNITARIO")):
-            r["Indexador"] = "PRÉ (Prefixado)"
-            r["Indexador_Inferido"] = False
+            
+        # 3. Pré-fixada ou fallback -> PRÉ
+        r["Indexador"] = "PRÉ (Prefixado)"
+        r["Indexador_Inferido"] = False
 
     def _extract_vencimento(self, r, is_hist):
         import re
@@ -1675,12 +1668,12 @@ class CVMDataEngine:
             'taxa', 'volume', 'estimado', 'lider', 'status', 'rito', 
             'regime', 'publico', 'ntnb', 'ntnb_fonte', 'vencimento', 
             'esg', 'vol_pf', 'vol_fd', 'vol_est', 'vol_prev', 'vol_seg', 
-            'vol_inst', 'aloc_pendente', 'cnpj_emissor',
+            'vol_inst', 'aloc_pendente', 'cnpj_emissor', 'coordenadores_todos',
             'Id_Processo', 'Numero_Requerimento', 'Data_Clean', 'Ano', 'Emissor', 'Ativo',
             'Indexador', 'Taxa_Juros', 'Volume_Float', 'Is_Estimated_Vol', 'Taxa_Declarada',
             'Lider', 'Consorcio', 'Status', 'Rito', 'Regime', 'Publico_Alvo', 'Referencia_NTNB',
             'NTNB_Fonte', 'Vencimento', 'ESG', 'Vol_Pessoa_Fisica', 'Vol_Fundos', 'Vol_Estrangeiro',
-            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor'
+            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos'
         ]
         
         rows_colunares = []
@@ -1691,16 +1684,16 @@ class CVMDataEngine:
                 r_id, r.get('Data_Clean', ''), r.get('Ano', ''), r.get('Emissor', ''), r.get('Ativo', ''),
                 r.get('Indexador', ''), r.get('Taxa_Juros', ''), r.get('Volume_Float', 0.0), bool(r.get('Is_Estimated_Vol', False)),
                 r.get('Lider', ''), r.get('Status', ''), r.get('Rito', ''), r.get('Regime', ''), r.get('Publico_Alvo', ''),
-                r.get('Referencia_NTNB', ''), r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Não'),
+                r.get('Referencia_NTNB', ''), r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'),
                 r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
                 r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0),
-                r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''),
+                r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), r.get('Coordenadores_Todos', []),
                 # Legacy Uppercase Columns
                 r_id, r_id, r.get('Data_Clean', ''), r.get('Ano', ''), r.get('Emissor', ''), r.get('Ativo', ''),
                 r.get('Indexador', ''), r.get('Taxa_Juros', ''), r.get('Volume_Float', 0.0), bool(r.get('Is_Estimated_Vol', False)), not bool(r.get('Is_Estimated_Vol', False)),
                 r.get('Lider', ''), r.get('Lider', ''), r.get('Status', ''), r.get('Rito', ''), r.get('Regime', ''), r.get('Publico_Alvo', ''), r.get('Referencia_NTNB', ''),
-                r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Não'), r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
-                r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', '')
+                r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'), r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
+                r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), r.get('Coordenadores_Todos', [])
             ])
             
         dataset = {

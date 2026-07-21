@@ -232,7 +232,7 @@ export function calcularKpis(rows) {
     };
 }
 
-export function calcularChartsOverview(rows) {
+export function calcularChartsOverview(rows, modoCoordenador = "lider") {
     const lideres = {};
     const emissores = {};
     const monthlyVol = {};
@@ -252,10 +252,20 @@ export function calcularChartsOverview(rows) {
         const v = parseFloat(r.volume || 0);
         if (v <= 0) continue;
 
-        // Lideres
-        const l = r.lider || "Não Informado";
-        if (!lideres[l]) lideres[l] = { v: 0, c: 0 };
-        lideres[l].v += v; lideres[l].c += 1;
+        // Lideres / Coordenadores
+        if (modoCoordenador === "todos" && r.coordenadores_todos && Array.isArray(r.coordenadores_todos) && r.coordenadores_todos.length > 0) {
+            for (const coord of r.coordenadores_todos) {
+                const c = coord || "Não Informado";
+                if (!lideres[c]) lideres[c] = { v: 0, c: 0 };
+                // Add the full volume for each coordinator (like league tables typically do for all participants without prorata)
+                // If prorata is needed, we would do v / r.coordenadores_todos.length
+                lideres[c].v += v; lideres[c].c += 1;
+            }
+        } else {
+            const l = r.lider || "Não Informado";
+            if (!lideres[l]) lideres[l] = { v: 0, c: 0 };
+            lideres[l].v += v; lideres[l].c += 1;
+        }
 
         // Emissores
         const e = r.emissor || "Não Informado";
@@ -423,20 +433,29 @@ export function calcularInvestors(rows) {
     };
 }
 
-export function calcularRankings(rows) {
+export function calcularRankings(rows, modoCoordenador = "lider") {
     const lideres = {};
     const emissores = {};
     const ativos = {};
     
     for (const r of rows) {
         const v = parseFloat(r.volume || 0);
-        const l = r.lider || "Não Informado";
         const e = r.emissor || "Não Informado";
         const a = r.setor_ativo || "Não Informado";
         
-        if (!lideres[l]) lideres[l] = { volume: 0, count: 0 };
-        lideres[l].volume += v;
-        lideres[l].count += 1;
+        if (modoCoordenador === "todos" && r.coordenadores_todos && Array.isArray(r.coordenadores_todos) && r.coordenadores_todos.length > 0) {
+            for (const coord of r.coordenadores_todos) {
+                const c = coord || "Não Informado";
+                if (!lideres[c]) lideres[c] = { volume: 0, count: 0 };
+                lideres[c].volume += v;
+                lideres[c].count += 1;
+            }
+        } else {
+            const l = r.lider || "Não Informado";
+            if (!lideres[l]) lideres[l] = { volume: 0, count: 0 };
+            lideres[l].volume += v;
+            lideres[l].count += 1;
+        }
         
         if (!emissores[e]) emissores[e] = { volume: 0, count: 0 };
         emissores[e].volume += v;

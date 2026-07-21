@@ -82,6 +82,94 @@ class CVMDataEngine:
             slot = datetime.combine(amanha, dt_time(8, 0), tzinfo=sp_tz)
         return slot
 
+    def _fetch_recent_offers_realtime(self):
+        """
+        Busca as ofertas dos últimos 15 dias direto da API D+0 da CVM.
+        """
+        import urllib.request
+        import json
+        from datetime import datetime, timedelta
+        
+        hoje = datetime.today()
+        ha_15_dias = hoje - timedelta(days=15)
+        
+        dt_ini = ha_15_dias.strftime('%d/%m/%Y')
+        dt_fim = hoje.strftime('%d/%m/%Y')
+        
+        url = 'https://web.cvm.gov.br/app/sre-publico/rest/sitePublico/pesquisar/detalhado'
+        payload = json.dumps({
+            "periodoCriacaoProcesso": {
+                "de": dt_ini,
+                "ate": dt_fim
+            },
+            "opa": False,
+            "tipoOferta": "OFERTA_REGULAR",
+            "modalidade": "TODAS",
+            "direcaoOrdenacao": "DESC",
+            "colunaOrdenacao": "data",
+            "pagina": 1,
+            "tamanhoPagina": "1000"
+        }).encode('utf-8')
+        
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+        )
+        
+        novas = []
+        try:
+            with urllib.request.urlopen(req, timeout=15) as res:
+                dados = json.loads(res.read().decode('utf-8'))
+                registros = dados.get('registros', [])
+                
+                for r in registros:
+                    dt = r.get('data') or ''
+                    if dt and len(dt) == 10:
+                        # DD/MM/YYYY -> YYYY-MM-DD
+                        dt_clean = f"{dt[6:10]}-{dt[3:5]}-{dt[0:2]}"
+                    else:
+                        dt_clean = ""
+                        
+                    ano = dt_clean[:4]
+                    if len(ano) != 4 or not ano.isdigit():
+                        continue
+                        
+                    vol_float = self._parse_float(r.get("valorTotalEmReais"))
+                    
+                    # Usa idRequerimento como Numero_Requerimento para forçar o SRE enrichment
+                    req_id = r.get("idRequerimento") or "N/A"
+                    
+                    row_dict = {
+                        "Id_Processo": r.get("numeroProcesso") or "N/A",
+                        "Numero_Requerimento": req_id,
+                        "Regime": "Resolução 160 (Moderno)",
+                        "Ano": ano,
+                        "Data_Clean": dt_clean,
+                        "Rito": "Ordinário" if not r.get("registroAutomatico") else "Automático",
+                        "Status": r.get("statusDaOferta") or "Registrada",
+                        "Emissor": r.get("nomeEmissor") or "N/A",
+                        "CNPJ_Emissor": r.get("cnpjEmissor") or "",
+                        "Lider": r.get("nomeCoordenadorLider") or "",
+                        "CNPJ_Lider": r.get("cnpjCoordenadorLider") or "",
+                        "Ativo": r.get("nomeValorMobiliario") or "",
+                        "Volume": vol_float,
+                        "Volume_Texto": r.get("valorTotalEmReais"),
+                        "Indexador_Tipo": "INDEFINIDO",
+                        "Indexador_Inferido": "0",
+                        "Taxa_Juros": 0.0,
+                        "Taxa_Declarada": "",
+                        "Vencimento_Clean": "",
+                        "Demografia_Detalhada": [],
+                        "_ym": dt_clean[:7],
+                        "_is_hist": False
+                    }
+                    novas.append(row_dict)
+        except Exception as e:
+            print(f"[ERROR] API SRE D+0: {e}")
+            
+        return novas
+
     def needs_refresh(self):
         source_zip = ZIP_PATH if os.path.exists(ZIP_PATH) else (SCRATCH_ZIP if os.path.exists(SCRATCH_ZIP) else None)
         if not source_zip or not os.path.exists(source_zip):
@@ -1114,6 +1202,22 @@ class CVMDataEngine:
                     r["Indexador"] = "PRÉ (Prefixado)"
                     r["Indexador_Inferido"] = False
 
+        # 3. Integração em Tempo Real (Scraper D+0)
+        try:
+            realtime_offers = self._fetch_recent_offers_realtime()
+            existing_ids = {str(u.get("Id_Processo")).strip() for u in unified if u.get("Id_Processo") and u.get("Id_Processo") != "N/A"}
+            
+            added_rt = 0
+            for rt_off in realtime_offers:
+                pid = str(rt_off.get("Id_Processo")).strip()
+                if pid not in existing_ids:
+                    unified.append(rt_off)
+                    existing_ids.add(pid)
+                    added_rt += 1
+            print(f"[D+0 SCRAPER] Foram integradas {added_rt} ofertas recentes que não constavam no ZIP oficial.")
+        except Exception as e:
+            print(f"[ERROR] Falha ao processar scraper D+0: {e}")
+
         # Sort descending by Data_Clean
         unified.sort(key=lambda x: x["Data_Clean"], reverse=True)
         self.rows = unified
@@ -1308,18 +1412,21 @@ class CVMDataEngine:
                                                 if not campos_encontrados and lote.get("camposCadastrados"):
                                                     campos_encontrados = lote["camposCadastrados"]
                                                 t = lote.get("taxaRemuneracao", "")
-                                                if t and str(t).strip() and str(t).strip() not in ("-", "--", "Não Informado", "0", "0%"):
+                                                if t and str(t).strip() and str(t).strip() not in ("-", "--", "N\u00e3o Informado", "0", "0%"):
                                                     taxa_encontrada = str(t).strip()
+                                                
                                                 if lote.get("camposCadastrados"):
                                                     for c in lote["camposCadastrados"]:
                                                         nm = str(c.get("campoNome", "")).lower()
                                                         val = str(c.get("campoValor", "")).strip()
-                                                        if not taxa_encontrada and any(k in nm for k in ("remuneração final", "remuneração máxima", "taxa de remuneração", "juros")):
-                                                            if val and val not in ("-", "--", "Não Informado", "0", "0%"):
-                                                                taxa_encontrada = val
-                                                        if not venc_encontrado and ("venc" in nm or "data de vencimento" in nm):
-                                                            if val and val not in ("-", "--", "00/00/0000", "Não Informado"):
+                                                        if val and val not in ("-", "--", "Não Informado", "0", "0%", "N/A"):
+                                                            if "venc" in nm or "data de vencimento" in nm:
                                                                 venc_encontrado = val
+                                                            elif "remunera" in nm or "juros" in nm:
+                                                                if "final" in nm:
+                                                                    taxa_encontrada = val
+                                                                elif not taxa_encontrada:
+                                                                    taxa_encontrada = val
                                                 if taxa_encontrada and campos_encontrados and venc_encontrado: break
                                             if taxa_encontrada and campos_encontrados and venc_encontrado: break
                             return taxa_encontrada, campos_encontrados, venc_encontrado
@@ -1394,10 +1501,13 @@ class CVMDataEngine:
                         
                 if batch_updated and updated_count >= 20:
                     _save_sre_cache()
+                    self._build_columnar_dataset()
                     updated_count = 0
                 time.sleep(0.2)
 
             _save_sre_cache()
+            if updated_count > 0:
+                self._build_columnar_dataset()
 
         
         t = threading.Thread(target=worker_loop, daemon=True)

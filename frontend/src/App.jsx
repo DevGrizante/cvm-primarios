@@ -643,6 +643,38 @@ const App = () => {
                 const objects = dsJson.rows.map(row => {
                   const obj = {};
                   cols.forEach((c, i) => obj[c] = row[i]);
+                  // Legacy UpperCase mapping for JSX table & OfferDrawer
+                  obj.Id_Processo = obj.id;
+                  obj.Numero_Requerimento = obj.id;
+                  obj.Data_Clean = obj.data;
+                  obj.Ano = obj.ano;
+                  obj.Emissor = obj.emissor;
+                  obj.Ativo = obj.setor_ativo;
+                  obj.Indexador = obj.indexador;
+                  obj.Taxa_Juros = obj.taxa;
+                  obj.Volume_Float = obj.volume;
+                  obj.Is_Estimated_Vol = obj.estimado;
+                  obj.Taxa_Declarada = !obj.estimado;
+                  obj.Lider = obj.lider;
+                  obj.Consorcio = obj.lider;
+                  obj.Status = obj.status;
+                  obj.Rito = obj.rito;
+                  obj.Regime = obj.regime;
+                  obj.Publico_Alvo = obj.publico;
+                  obj.Referencia_NTNB = obj.ntnb;
+                  obj.NTNB_Fonte = obj.ntnb_fonte;
+                  obj.Vencimento = obj.vencimento;
+                  obj.ESG = obj.esg;
+                  obj.Vol_Pessoa_Fisica = obj.vol_pf;
+                  obj.Vol_Fundos = obj.vol_fd;
+                  obj.Vol_Estrangeiro = obj.vol_est;
+                  obj.Vol_Previdencia = obj.vol_prev;
+                  obj.Vol_Seguradora = obj.vol_seg;
+                  obj.Vol_Seguradoras = obj.vol_seg;
+                  obj.Vol_Institucional = obj.vol_inst;
+                  obj.Vol_Instituicoes = obj.vol_inst;
+                  obj.Alocacao_Pendente = obj.aloc_pendente;
+                  obj.CNPJ_Emissor = obj.cnpj_emissor;
                   return obj;
                 });
                 datasetRef.current = objects;

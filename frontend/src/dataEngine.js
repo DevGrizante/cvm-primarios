@@ -124,7 +124,8 @@ export function filtrar(rows, filtros) {
 }
 
 export function calcularKpis(rows) {
-    let volConfirmado = 0, volEstimado = 0;
+    let volConfirmado = 0, volEstimado = 0, countEstimado = 0;
+    let countAuto = 0;
     let emAnalise = { vol: 0, count: 0 };
     let preOperacional = { vol: 0, count: 0 };
     let canceladas = { vol: 0, count: 0 };
@@ -145,7 +146,7 @@ export function calcularKpis(rows) {
         const v = parseFloat(r.volume || 0);
         if (isNaN(v) || v <= 0) continue;
         
-        if (r.estimado) volEstimado += v;
+        if (r.estimado) { volEstimado += v; countEstimado++; }
         else volConfirmado += v;
         
         const s = (r.status || "").toLowerCase();
@@ -165,6 +166,9 @@ export function calcularKpis(rows) {
         else if (rg.includes("400")) { vol400 += v; count400++; }
         else if (rg.includes("476")) { vol476 += v; count476++; }
         
+        const rt = (r.rito || "").toLowerCase();
+        if (rt.includes("auto")) { countAuto++; }
+
         const idx = (r.indexador || "").toLowerCase();
         if (idx.includes("ipca") || idx.includes("infla")) { volNtnb += v; countNtnb++; }
         else if (idx.includes("cdi") || idx.includes("di")) { volCdi += v; countCdi++; }
@@ -188,13 +192,21 @@ export function calcularKpis(rows) {
     }
 
     const totalVol = volConfirmado + volEstimado;
+    const totalIdx = volNtnb + volCdi + volPre;
 
     return {
         volume_total: totalVol,
         volume_estimado: volEstimado,
         qtd_ofertas: rows.length,
-        taxa_auto: 0, // Not used much
+        share_cdi: totalIdx > 0 ? ((volCdi / totalIdx) * 100).toFixed(1) : 0,
+        share_ipca: totalIdx > 0 ? ((volNtnb / totalIdx) * 100).toFixed(1) : 0,
+        share_pre: totalIdx > 0 ? ((volPre / totalIdx) * 100).toFixed(1) : 0,
+        vol_bookbuilding: volEstimado,
+        qtd_bookbuilding: countEstimado,
         ticket_medio: rows.length > 0 ? totalVol / rows.length : 0,
+        taxa_varejo: (volPessoaFisica + volInstitucional > 0) ? ((volPessoaFisica / (volPessoaFisica + volInstitucional)) * 100).toFixed(1) : 0,
+        vol_confirmado: volConfirmado,
+        taxa_auto: (rows.length > 0) ? ((countAuto / rows.length) * 100).toFixed(1) : 0,
         em_analise_volume: emAnalise.vol,
         em_analise_qtd: emAnalise.count,
         pre_operacional_volume: preOperacional.vol,

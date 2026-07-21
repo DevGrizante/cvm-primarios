@@ -734,10 +734,14 @@ const App = () => {
     }, [filters, searchQuery, sortBy, sortOrder, currentPage]);
 
   // Local Data Engine using useMemo
-  const filteredRows = useMemo(() => {
+  const baseFilteredRows = useMemo(() => {
     if (!datasetLoaded || !datasetRef.current) return [];
-    return filtrar(datasetRef.current, { ...filters, busca: searchQuery });
+    return filtrar(datasetRef.current, { ...filters, incluir_estimados: true, busca: searchQuery });
   }, [datasetLoaded, filters, searchQuery]);
+
+  const filteredRows = useMemo(() => {
+    return filters.incluir_estimados ? baseFilteredRows : baseFilteredRows.filter(r => !r.estimado);
+  }, [baseFilteredRows, filters.incluir_estimados]);
 
   useEffect(() => {
     if (!datasetLoaded) return;
@@ -745,7 +749,7 @@ const App = () => {
     // Use timeout to allow UI to render loading state before heavy JS blocks main thread
     const t = setTimeout(() => {
       try {
-        setKpis(calcularKpis(filteredRows));
+        setKpis(calcularKpis(baseFilteredRows));
         setOverviewCharts(calcularChartsOverview(filteredRows));
         setInvestorCharts(calcularInvestors(filteredRows));
         setRankings(calcularRankings(filteredRows));
@@ -1780,7 +1784,20 @@ const App = () => {
                                                 indexAxis: "y",
                                                 scales: {
                                                     x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                                    y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter", size: 10 } } }
+                                                    y: { 
+                                                        grid: { display: false }, 
+                                                        ticks: { 
+                                                            color: "#E2E8F0", 
+                                                            font: { family: "Inter", size: 10 },
+                                                            callback: function(value) {
+                                                                let label = this.getLabelForValue(value);
+                                                                if (label && label.length > 25) {
+                                                                    return label.substr(0, 25) + '...';
+                                                                }
+                                                                return label;
+                                                            }
+                                                        } 
+                                                    }
                                                 },
                                                 plugins: { legend: { display: false } }
                                             }}

@@ -97,33 +97,37 @@ class CVMDataEngine:
         dt_fim = hoje.strftime('%d/%m/%Y')
         
         url = 'https://web.cvm.gov.br/app/sre-publico/rest/sitePublico/pesquisar/detalhado'
-        payload = json.dumps({
-            "periodoCriacaoProcesso": {
-                "de": dt_ini,
-                "ate": dt_fim
-            },
-            "opa": False,
-            "tipoOferta": "OFERTA_REGULAR",
-            "modalidade": "TODAS",
-            "direcaoOrdenacao": "DESC",
-            "colunaOrdenacao": "data",
-            "pagina": 1,
-            "tamanhoPagina": "1000"
-        }).encode('utf-8')
-        
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
-        )
-        
         novas = []
-        try:
-            with urllib.request.urlopen(req, timeout=15) as res:
-                dados = json.loads(res.read().decode('utf-8'))
-                registros = dados.get('registros', [])
-                
-                for r in registros:
+        pagina = 1
+        while True:
+            payload = json.dumps({
+                "periodoCriacaoProcesso": {
+                    "de": dt_ini,
+                    "ate": dt_fim
+                },
+                "opa": False,
+                "tipoOferta": "OFERTA_REGULAR",
+                "modalidade": "TODAS",
+                "direcaoOrdenacao": "DESC",
+                "colunaOrdenacao": "data",
+                "pagina": pagina,
+                "tamanhoPagina": "200"
+            }).encode('utf-8')
+            
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+            )
+            
+            try:
+                with urllib.request.urlopen(req, timeout=15) as res:
+                    dados = json.loads(res.read().decode('utf-8'))
+                    registros = dados.get('registros', [])
+                    if not registros:
+                        break
+                    
+                    for r in registros:
                     dt = r.get('data') or ''
                     if dt and len(dt) == 10:
                         # DD/MM/YYYY -> YYYY-MM-DD
@@ -161,12 +165,22 @@ class CVMDataEngine:
                         "Taxa_Declarada": "",
                         "Vencimento_Clean": "",
                         "Demografia_Detalhada": [],
+                        "Vol_Pessoa_Fisica": 0.0,
+                        "Vol_Fundos": 0.0,
+                        "Vol_Estrangeiro": 0.0,
+                        "Vol_Previdencia": 0.0,
+                        "Vol_Seguradoras": 0.0,
+                        "Vol_Instituicoes": 0.0,
                         "_ym": dt_clean[:7],
                         "_is_hist": False
                     }
                     novas.append(row_dict)
-        except Exception as e:
-            print(f"[ERROR] API SRE D+0: {e}")
+                if len(registros) < 200:
+                    break
+                pagina += 1
+            except Exception as e:
+                print(f"[ERROR] API SRE D+0: {e}")
+                break
             
         return novas
 
@@ -1429,18 +1443,45 @@ class CVMDataEngine:
                                                                     taxa_encontrada = val
                                                 if taxa_encontrada and campos_encontrados and venc_encontrado: break
                                             if taxa_encontrada and campos_encontrados and venc_encontrado: break
-                            return taxa_encontrada, campos_encontrados, venc_encontrado
+                            
+                            coordenadores = []
+                            try:
+                                part_url = f"https://web.cvm.gov.br/sre-publico-cvm/rest/sitePublico/pesquisar/participantes/{req_id}"
+                                preq = urllib.request.Request(part_url, headers={'User-Agent': 'Mozilla/5.0'})
+                                with urllib.request.urlopen(preq, context=ctx, timeout=2.0) as presp:
+                                    if presp.status == 200:
+                                        pdata = json.loads(presp.read().decode("utf-8"))
+                                        for part in pdata:
+                                            if part.get("tipo") == "COORDENADOR":
+                                                coordenadores.append(part.get("razaoSocial", "").strip())
+                            except Exception:
+                                pass
+
+                            return taxa_encontrada, campos_encontrados, venc_encontrado, coordenadores
                 except Exception:
                     pass
-                return None, [], None
+                return None, [], None, []
 
-            def _apply_row_update(r, taxa_e, campos_e, venc_e, req_id):
+            def _apply_row_update(r, taxa_e, campos_e, venc_e, coordenadores_e, req_id):
                 updated = False
-                if taxa_e or campos_e or venc_e:
+                if taxa_e or campos_e or venc_e or coordenadores_e:
                     if taxa_e:
                         r["Taxa_Juros"] = taxa_e
                         r["Taxa_Declarada"] = True
                         r["Remuneracao_API_CVM"] = taxa_e
+                        taxa_upper = taxa_e.upper()
+                        if "IPCA" in taxa_upper or "NTNB" in taxa_upper or "NTN-B" in taxa_upper:
+                            r["Indexador"] = "IPCA+"
+                            r["Indexador_Tipo"] = "IPCA+"
+                        elif "CDI" in taxa_upper or "DI" in taxa_upper:
+                            r["Indexador"] = "CDI+"
+                            r["Indexador_Tipo"] = "CDI+"
+                        elif "PRÉ-FIXADA" in taxa_upper or "PREFIXADA" in taxa_upper or "PRE-FIXADA" in taxa_upper:
+                            r["Indexador"] = "PRÉ"
+                            r["Indexador_Tipo"] = "PRÉ"
+                        else:
+                            r["Indexador"] = "PRÉ"
+                            r["Indexador_Tipo"] = "PRÉ"
                         updated = True
                     if campos_e:
                         r["Caracteristicas_CVM"] = campos_e
@@ -1457,6 +1498,19 @@ class CVMDataEngine:
                         else:
                             r["Vencimento"] = venc_e[:7]
                         updated = True
+                    if coordenadores_e:
+                        norm_coords = []
+                        for c in coordenadores_e:
+                            norm = self._normalize_coordenador(c)
+                            if norm and norm != "Nao Informado" and norm not in norm_coords:
+                                norm_coords.append(norm)
+                        if norm_coords:
+                            r["Consorcio_List"] = norm_coords
+                            r["Consorcio"] = " / ".join(norm_coords)
+                            r["Lider"] = norm_coords[0]
+                            consorcio_cache[req_id] = norm_coords
+                            r["Coordenadores_Todos"] = norm_coords
+                            updated = True
                     ref, fonte = self._extract_ntnb_reference(r)
                     r["Referencia_NTNB"] = ref
                     r["NTNB_Fonte"] = fonte
@@ -1488,8 +1542,8 @@ class CVMDataEngine:
                     req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
                     if not req_id or not req_id.isdigit() or req_id in cached_sre:
                         return False
-                    tx, cp, vn = _fetch_api_sre(req_id)
-                    return _apply_row_update(r, tx, cp, vn, req_id)
+                    tx, cp, vn, cd = _fetch_api_sre(req_id)
+                    return _apply_row_update(r, tx, cp, vn, cd, req_id)
                 
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     results = list(executor.map(_process_one, batch))

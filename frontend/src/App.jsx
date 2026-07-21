@@ -545,7 +545,13 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         </div>
                         <div>
                             <span className="text-slate-500 block">Coordenador / Consórcio</span>
-                            <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>{offer.Consorcio || offer.Lider}</span>
+                            <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>Líder: {offer.Lider}</span>
+                            {offer.Coordenadores_Outros && (
+                                <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate"
+                                      title={"Consórcio: " + (offer.Consorcio || offer.Lider)}>
+                                    {offer.Coordenadores_Outros}
+                                </span>
+                            )}
                         </div>
                         <div>
                             <span className="text-slate-500 block">Processo SEI / Rito</span>
@@ -658,7 +664,11 @@ const App = () => {
                   obj.Is_Estimated_Vol = obj.estimado;
                   obj.Taxa_Declarada = !obj.estimado;
                   obj.Lider = obj.lider;
-                  obj.Consorcio = (obj.coordenadores_todos && obj.coordenadores_todos.length > 0) ? obj.coordenadores_todos.join('/') : obj.lider;
+                  const coords = Array.isArray(obj.coordenadores_todos) ? obj.coordenadores_todos : [];
+                  const lider = obj.lider || "";
+                  const outros = coords.filter(c => c && c !== lider);
+                  obj.Consorcio = coords.length > 0 ? coords.join(' / ') : lider;
+                  obj.Coordenadores_Outros = outros.join(' / ');
                   obj.Status = obj.status;
                   obj.Rito = obj.rito;
                   obj.Regime = obj.regime;
@@ -1259,7 +1269,13 @@ const App = () => {
                                                     <td className="p-3.5 font-mono text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
                                                     <td className="p-3.5 font-semibold text-white max-w-[240px] truncate" title={r.Emissor}>
                                                         {r.Emissor}
-                                                        <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate" title={r.Consorcio || r.Lider}>{r.Consorcio || r.Lider}</span>
+                                                        <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate" title={r.Consorcio || r.Lider}>Líder: {r.Lider}</span>
+                                                        {r.Coordenadores_Outros && (
+                                                            <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate"
+                                                                  title={"Consórcio: " + (r.Consorcio || r.Lider)}>
+                                                                {r.Coordenadores_Outros}
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="p-3.5">
                                                         <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80 font-mono text-[11px]">

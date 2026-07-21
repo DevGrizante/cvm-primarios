@@ -18,6 +18,8 @@ ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
+SCHEMA_VERSION = 5
+
 class CVMDataEngine:
     def __init__(self):
         self.rows = []
@@ -558,10 +560,21 @@ class CVMDataEngine:
         
         ativo = str(row_dict.get("Valor_Mobiliario") if not is_hist else row_dict.get("Tipo_Ativo") or "").upper()
         
+        # 0. Prioridade 0: taxa declarada no CSV decide antes de qualquer heurística de texto.
+        taxa_str = str(row_dict.get("Taxa_Juros", "")).upper()
+        if any(w in taxa_str for w in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLA", "INPC", "IGP-M", "IGPM", "INCC")):
+            return "IPCA / Inflação", False
+        if (any(w in taxa_str for w in ("CDI", "TAXA DI", "100% DI", "FLUTUANTE"))
+                or re.search(r"\b(?:SELIC|ANBID|LIBOR)\b", taxa_str)
+                or re.search(r"\bDI\s*[\+\-]", taxa_str)):
+            return "CDI / DI", False
+        if any(w in taxa_str for w in ("PREFIXAD", "PRÉ-FIXAD", "PRE-FIXAD", "TAXA PRÉ", "TAXA FIXA", "JUROS FIXOS")):
+            return "PRÉ (Prefixado)", False
+
         # 1. Priority 1: Explicit IPCA/Inflation/NTNB terms
         ref_ntnb = str(row_dict.get("Referencia_NTNB", "")).strip()
         caract_str = str(row_dict.get("Caracteristicas_CVM", "")).upper()
-        taxa_str = str(row_dict.get("Taxa_Juros", "")).upper()
+        
         if (
             (ref_ntnb and ref_ntnb not in ("Outras / Não Espec.", "", "None"))
             or any(w in taxa_str for w in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLA"))
@@ -690,26 +703,47 @@ class CVMDataEngine:
         import re
         taxa = str(r.get("Taxa_Juros", "")).strip()
         t_upper = taxa.upper()
-        
-        if not taxa or taxa in ("Nao Informado (CVM)", "Não Informado (CVM)", "N/A", "-", "--", "Nao Informado", "Não Informado"):
+
+        # Nunca reclassificar placeholders/valores não informativos.
+        # Regra geral: se a taxa não tem dígito E não tem palavra-chave de indexador,
+        # ela não carrega informação de classificação — não mexer.
+        PLACEHOLDER_MARKERS = (
+            "NÃO INFORMADO", "NAO INFORMADO", "N/A", "N/I",
+            "VER REGULAMENTO", "VER DOSSIÊ", "VER DOSSIE",
+            "RENTABILIDADE ALVO", "RETORNO SUBORDINADO",
+            "NÃO APLICÁVEL", "NAO APLICAVEL", "RENDA VARIÁVEL", "RENDA VARIAVEL",
+            "A DEFINIR", "BOOKBUILDING",
+        )
+        if not taxa or any(m in t_upper for m in PLACEHOLDER_MARKERS):
             return
-            
-        # Regra solicitada:
-        # 1. IPCA, NTNB, NTN-B -> IPCA+
-        if "IPCA" in t_upper or "NTNB" in t_upper or "NTN-B" in t_upper:
+
+        IPCA_TERMS = ("IPCA", "NTNB", "NTN-B", "TESOURO IPCA", "TN-B", "INPC", "IGP-M", "IGPM", "INCC", "INFLA")
+        CDI_TERMS_RE = re.compile(r"\b(?:CDI|DI|SELIC|ANBID|LIBOR|OVER)\b")
+        PRE_TERMS = ("PREFIX", "PRÉ-FIX", "PRE-FIX", "PRÉ FIX", "PRE FIX", "TAXA FIXA", "JUROS FIXOS", "REMUNERAÇÃO FIXA", "REMUNERACAO FIXA")
+
+        # 1. Família IPCA/inflação
+        if any(w in t_upper for w in IPCA_TERMS):
             r["Indexador"] = "IPCA / Inflação"
             r["Indexador_Inferido"] = False
             return
-            
-        # 2. CDI, DI -> CDI+
-        if re.search(r'\b(?:CDI|DI)\b', t_upper):
+
+        # 2. Família CDI/pós-fixado flutuante
+        if CDI_TERMS_RE.search(t_upper) or "FLUTUANTE" in t_upper or "TAXA DI" in t_upper:
             r["Indexador"] = "CDI / DI"
             r["Indexador_Inferido"] = False
             return
-            
-        # 3. Pré-fixada ou fallback -> PRÉ
-        r["Indexador"] = "PRÉ (Prefixado)"
-        r["Indexador_Inferido"] = False
+
+        # 3. PRÉ somente com evidência EXPLÍCITA:
+        #    termos de prefixado, OU taxa pura tipo "12,50% a.a." sem nenhum termo flutuante/inflação.
+        is_pure_pct = bool(re.match(r"^\d+[\d,.]*\s*%", taxa))
+        if any(w in t_upper for w in PRE_TERMS) or is_pure_pct:
+            r["Indexador"] = "PRÉ (Prefixado)"
+            r["Indexador_Inferido"] = False
+            return
+
+        # 4. Sem evidência na taxa: PRESERVAR a classificação existente do _infer_indexador.
+        #    (Este é o ponto central da correção — o fallback antigo mandava tudo para PRÉ.)
+        return
 
     def _extract_vencimento(self, r, is_hist):
         import re
@@ -1468,10 +1502,10 @@ class CVMDataEngine:
                             r["Indexador"] = "CDI+"
                             r["Indexador_Tipo"] = "CDI+"
                         elif "PRÉ-FIXADA" in taxa_upper or "PREFIXADA" in taxa_upper or "PRE-FIXADA" in taxa_upper:
-                            r["Indexador"] = "PRÉ"
+                            r["Indexador"] = "PRÉ (Prefixado)"
                             r["Indexador_Tipo"] = "PRÉ"
                         else:
-                            r["Indexador"] = "PRÉ"
+                            r["Indexador"] = "PRÉ (Prefixado)"
                             r["Indexador_Tipo"] = "PRÉ"
                         updated = True
                     if campos_e:
@@ -1674,16 +1708,20 @@ class CVMDataEngine:
             'taxa', 'volume', 'estimado', 'lider', 'status', 'rito', 
             'regime', 'publico', 'ntnb', 'ntnb_fonte', 'vencimento', 
             'esg', 'vol_pf', 'vol_fd', 'vol_est', 'vol_prev', 'vol_seg', 
-            'vol_inst', 'aloc_pendente', 'cnpj_emissor', 'coordenadores_todos',
-            'Id_Processo', 'Numero_Requerimento', 'Data_Clean', 'Ano', 'Emissor', 'Ativo',
-            'Indexador', 'Taxa_Juros', 'Volume_Float', 'Is_Estimated_Vol', 'Taxa_Declarada',
-            'Lider', 'Consorcio', 'Status', 'Rito', 'Regime', 'Publico_Alvo', 'Referencia_NTNB',
-            'NTNB_Fonte', 'Vencimento', 'ESG', 'Vol_Pessoa_Fisica', 'Vol_Fundos', 'Vol_Estrangeiro',
-            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos'
+            'vol_inst', 'aloc_pendente', 'cnpj_emissor', 'coordenadores_todos'
         ]
         
         rows_colunares = []
         for r in self.rows:
+            ct = r.get('Coordenadores_Todos')
+            if isinstance(ct, dict):
+                ct = ct.get('coordenadores') or []
+            if not isinstance(ct, list):
+                ct = []
+            if not ct:
+                ct = r.get('Consorcio_List') or []
+            coords_list = [str(c) for c in ct if c and str(c).strip() and str(c) != "Não Informado"]
+
             # Optimize nulls/empty strings to None or empty to save bytes
             r_id = r.get('Numero_Requerimento') or r.get('Id_Processo') or ''
             rows_colunares.append([
@@ -1693,13 +1731,7 @@ class CVMDataEngine:
                 r.get('Referencia_NTNB', ''), r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'),
                 r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
                 r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0),
-                r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), r.get('Coordenadores_Todos', []),
-                # Legacy Uppercase Columns
-                r_id, r_id, r.get('Data_Clean', ''), r.get('Ano', ''), r.get('Emissor', ''), r.get('Ativo', ''),
-                r.get('Indexador', ''), r.get('Taxa_Juros', ''), r.get('Volume_Float', 0.0), bool(r.get('Is_Estimated_Vol', False)), not bool(r.get('Is_Estimated_Vol', False)),
-                r.get('Lider', ''), r.get('Lider', ''), r.get('Status', ''), r.get('Rito', ''), r.get('Regime', ''), r.get('Publico_Alvo', ''), r.get('Referencia_NTNB', ''),
-                r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'), r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
-                r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), r.get('Coordenadores_Todos', [])
+                r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), coords_list
             ])
             
         dataset = {
@@ -1711,7 +1743,7 @@ class CVMDataEngine:
         gzipped = gzip.compress(json_bytes, compresslevel=6) # Balanced speed/compression
         
         # Calculate dataset version hash
-        self.dataset_version = hashlib.md5((str(self.last_update) + str(len(self.rows)) + "v2").encode()).hexdigest()[:8]
+        self.dataset_version = hashlib.md5((str(self.last_update) + str(len(self.rows)) + str(SCHEMA_VERSION)).encode()).hexdigest()[:8]
         self.columnar_dataset = dataset
         self.columnar_gzip = gzipped
         

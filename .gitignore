@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+backend/data_cache/*.zip
+backend/data_cache/*.csv
+!backend/data_cache/sre_enrichment_cache.json
+*.zip
+*.log
+.DS_Store
+node_modules/
+# dist/  <-- removed: dist is now committed so Render doesn't need Node.js to build
+*.db
+*.sqlite
+scratch_npm/
+
+*.tmp
+*.temp
+
+PASTAS_PRONTAS_PARA_O_GITHUB/

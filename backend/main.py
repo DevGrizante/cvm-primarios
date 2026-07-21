@@ -934,7 +934,14 @@ def get_offer_detail(id_processo: str):
     clean_id = id_processo.strip()
     for r in engine.rows:
         if str(r.get("Id_Processo")).strip() == clean_id or str(r.get("Numero_Requerimento")).strip() == clean_id:
-            return _enrich_offer_from_api(r)
+            detalhe = _enrich_offer_from_api(r).copy()
+            ct = r.get("Coordenadores_Todos")
+            if isinstance(ct, dict):
+                ct = ct.get("coordenadores") or []
+            if not isinstance(ct, list) or not ct:
+                ct = r.get("Consorcio_List") or []
+            detalhe["Coordenadores_Lista"] = [c for c in ct if c and c != "Não Informado"]
+            return detalhe
     raise HTTPException(status_code=404, detail="Oferta não encontrada no banco de dados CVM.")
 
 @app.get("/api/export")

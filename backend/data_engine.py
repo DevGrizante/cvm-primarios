@@ -18,7 +18,7 @@ ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 class CVMDataEngine:
     def __init__(self):
@@ -457,10 +457,36 @@ class CVMDataEngine:
             "ORAMA": "ÓRAMA"
         }
         if s in aliases:
-            return aliases[s]
-        for k, v in aliases.items():
-            if k == s or (len(k) > 4 and k in s and "BANCO" not in k and k not in ("ITAU", "BTG", "UBS", "XP")):
-                return v
+            s = aliases[s]
+        else:
+            for k, v in aliases.items():
+                if k == s or (len(k) > 4 and k in s and "BANCO" not in k and k not in ("ITAU", "BTG", "UBS", "XP")):
+                    s = v
+                    break
+        
+        # Simplificação de display para instituições famosas (aplicada por ÚLTIMO,
+        # sobre o nome canônico já normalizado). Usa regex com \b para evitar
+        # falsos positivos por substring.
+        import re
+        SIMPLIFICACOES = (
+            (r"\bITAU\b", "ITAÚ"),                     # ITAÚ BBA, ITAU UNIBANCO, ITAU CORRETORA -> ITAÚ
+            (r"\bBTG\b", "BTG"),                       # BTG PACTUAL -> BTG
+            (r"\bXP\b", "XP"),                         # XP INVESTIMENTOS -> XP
+            (r"\bBRADESCO\b", "BRADESCO"),             # BRADESCO BBI -> BRADESCO
+            (r"\bSANTANDER\b", "SANTANDER"),
+            (r"\bSAFRA\b", "SAFRA"),
+            (r"\bBANCO DO BRASIL\b|\bBB BANCO DE INVESTIMENTO\b|\bBB[- ]BI\b", "BB"),
+            (r"\bCAIXA ECONOMICA\b", "CAIXA"),
+            (r"\bGENIAL\b", "GENIAL"),
+            (r"\bDAYCOVAL\b", "DAYCOVAL"),
+            (r"\bCITI(?:BANK|GROUP)?\b", "CITI"),
+            (r"\bJ\.?P\.?\s*MORGAN\b|\bJPMORGAN\b", "JP MORGAN"),
+            (r"\bGOLDMAN\b", "GOLDMAN SACHS"),
+        )
+        for pattern, curto in SIMPLIFICACOES:
+            if re.search(pattern, s):
+                s = curto
+                break
         return s
 
     def _parse_float(self, val):
@@ -591,13 +617,9 @@ class CVMDataEngine:
         if re.search(r'\b(?:100%|99%|101%|102%|105%|\+\s*|\-\s*)\s*DI\b', text) or re.search(r'\bDI\s*\+', text):
             return "CDI / DI", False
 
-        # 3. Priority 3: Explicit Prefixado terms or Pure Percentage / Fixed Rate without floating index keywords
+        # 3. Priority 3: Explicit Prefixado terms without floating index keywords
         if any(w in text for w in ("PREFIXAD", "PRÉ-FIXAD", "PRE-FIXAD", "TAXA PRÉ", "TAXA PRE ", "TAXA FIXA", "REMUNERAÇÃO FIXA", "JUROS FIXOS")):
             return "PRÉ (Prefixado)", False
-        if re.search(r'\d+[\d,.]*\s*%', text) or any(k in text for k in ("INTEGRALIZAÇÃO", "INTEGRALIZACAO", "ESCRITURA DE EMISSÃO", "ESCRITURA DE EMISSAO", "TABELA CONSTANTE")):
-            has_floating_or_infla = re.search(r'\b(?:CDI|DI|IPCA|INPC|IGP-M|IGPM|INCC|SELIC|TR|ANBID|TJLP|LIBOR|FLUTUANTE|FLUTUANTES|OVER)\b', text) or any(k in text for k in ("TAXA DI", " DI+", " DI-", "% DI", "DI %", "DI/"))
-            if not has_floating_or_infla:
-                return "PRÉ (Prefixado)", False
 
         # 4. Domain Inference based on statutory market structure (marked as inferred/heuristic)
         if "DEB" in ativo:
@@ -733,12 +755,41 @@ class CVMDataEngine:
             r["Indexador_Inferido"] = False
             return
 
-        # 3. PRÉ somente com evidência EXPLÍCITA:
-        #    termos de prefixado, OU taxa pura tipo "12,50% a.a." sem nenhum termo flutuante/inflação.
-        is_pure_pct = bool(re.match(r"^\d+[\d,.]*\s*%", taxa))
-        if any(w in t_upper for w in PRE_TERMS) or is_pure_pct:
+        # 3a. PRÉ com termo explícito (prefixado escrito na taxa) — certeza.
+        if any(w in t_upper for w in PRE_TERMS):
             r["Indexador"] = "PRÉ (Prefixado)"
             r["Indexador_Inferido"] = False
+            return
+
+        # 3b. Taxa numérica PURA (sem nenhuma keyword de indexador): classificar por banda.
+        m_num = re.match(r"^(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)\s*%", taxa)
+        if m_num:
+            raw_num = m_num.group(1).replace(".", "").replace(",", ".") if "," in m_num.group(1) else m_num.group(1)
+            try:
+                val = float(raw_num)
+            except ValueError:
+                return
+
+            if val >= 12.0:
+                r["Indexador"] = "PRÉ (Prefixado)"
+                r["Indexador_Inferido"] = True   # heurística por banda, não declaração
+                return
+
+            # Exceção IPCA: referência NTN-B ou classificação IPCA existente têm precedência.
+            # Spreads sobre NTN-B são tipicamente < 1% e NÃO podem virar CDI.
+            ntnb_ref = str(r.get("Referencia_NTNB", "")).strip()
+            tem_ntnb = (ntnb_ref and ntnb_ref not in ("Outras / Não Espec.", "", "None")) \
+                or str(r.get("NTNB_Fonte", "")).lower() in ("declarada", "aproximada")
+            if tem_ntnb or r.get("Indexador") == "IPCA / Inflação":
+                r["Indexador"] = "IPCA / Inflação"
+                return
+
+
+            if val <= 6.0:
+                r["Indexador"] = "CDI / DI"
+                r["Indexador_Inferido"] = True
+                return
+            # 6 < val < 12: zona ambígua — preservar classificação existente.
             return
 
         # 4. Sem evidência na taxa: PRESERVAR a classificação existente do _infer_indexador.
@@ -1708,7 +1759,12 @@ class CVMDataEngine:
             'taxa', 'volume', 'estimado', 'lider', 'status', 'rito', 
             'regime', 'publico', 'ntnb', 'ntnb_fonte', 'vencimento', 
             'esg', 'vol_pf', 'vol_fd', 'vol_est', 'vol_prev', 'vol_seg', 
-            'vol_inst', 'aloc_pendente', 'cnpj_emissor', 'coordenadores_todos'
+            'vol_inst', 'aloc_pendente', 'cnpj_emissor', 'coordenadores_todos',
+            'Id_Processo', 'Numero_Requerimento', 'Data_Clean', 'Ano', 'Emissor', 'Ativo',
+            'Indexador', 'Taxa_Juros', 'Volume_Float', 'Is_Estimated_Vol', 'Taxa_Declarada',
+            'Lider', 'Consorcio', 'Status', 'Rito', 'Regime', 'Publico_Alvo', 'Referencia_NTNB',
+            'NTNB_Fonte', 'Vencimento', 'ESG', 'Vol_Pessoa_Fisica', 'Vol_Fundos', 'Vol_Estrangeiro',
+            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos'
         ]
         
         rows_colunares = []
@@ -1731,7 +1787,13 @@ class CVMDataEngine:
                 r.get('Referencia_NTNB', ''), r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'),
                 r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
                 r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0),
-                r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), coords_list
+                r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), coords_list,
+                # Legacy Uppercase Columns
+                r_id, r_id, r.get('Data_Clean', ''), r.get('Ano', ''), r.get('Emissor', ''), r.get('Ativo', ''),
+                r.get('Indexador', ''), r.get('Taxa_Juros', ''), r.get('Volume_Float', 0.0), bool(r.get('Is_Estimated_Vol', False)), not bool(r.get('Is_Estimated_Vol', False)),
+                r.get('Lider', ''), r.get('Lider', ''), r.get('Status', ''), r.get('Rito', ''), r.get('Regime', ''), r.get('Publico_Alvo', ''), r.get('Referencia_NTNB', ''),
+                r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'), r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
+                r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), coords_list
             ])
             
         dataset = {

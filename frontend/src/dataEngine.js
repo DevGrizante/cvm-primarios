@@ -50,8 +50,10 @@ export function filtrar(rows, filtros) {
             for (let reg of regList) {
                 const regLower = reg.toLowerCase();
                 const rRegLower = (r.regime || "").toLowerCase();
-                if (reg === "160" && r.regime.includes("160")) { match = true; break; }
-                if (reg === "hist" && r.regime.includes("ICVM")) { match = true; break; }
+                if (regLower.includes("160") && rRegLower.includes("160")) { match = true; break; }
+                if (regLower.includes("hist") && (rRegLower.includes("icvm") || rRegLower.includes("400") || rRegLower.includes("476"))) { match = true; break; }
+                if (reg === "160" && rRegLower.includes("160")) { match = true; break; }
+                if (reg === "hist" && rRegLower.includes("icvm")) { match = true; break; }
                 if (rRegLower.includes(regLower)) { match = true; break; }
             }
             if (!match) return false;
@@ -68,8 +70,14 @@ export function filtrar(rows, filtros) {
         } else if (!anoList.includes("Todos")) {
             let match = false;
             for (let a of anoList) {
-                if (a === "Recentes (2023-2026)" && ["2023", "2024", "2025", "2026"].includes(r.ano)) { match = true; break; }
-                if (String(r.ano) === String(a)) { match = true; break; }
+                if (a === "Recentes (2023-2026)" && r_dt >= "2023-01" && r_dt <= "2026-12") {
+                    match = true;
+                    break;
+                }
+                if (r_ano === a) {
+                    match = true;
+                    break;
+                }
             }
             if (!match) return false;
         }
@@ -97,7 +105,15 @@ export function filtrar(rows, filtros) {
 
         if (!statusList.includes("Todos")) {
             const rStatus = (r.status || "").toLowerCase();
-            if (!statusList.some(st => rStatus.includes(st.toLowerCase()))) return false;
+            let match = false;
+            for (let st of statusList) {
+                const stLower = st.toLowerCase();
+                if (stLower.includes("andamento") && (rStatus.includes("andamento") || rStatus.includes("bookbuilding") || rStatus.includes("análise") || rStatus.includes("analise") || rStatus.includes("exigência") || rStatus.includes("pendente"))) { match = true; break; }
+                if (stLower.includes("registrada") && (rStatus.includes("registrad") || rStatus.includes("encerrad") || rStatus.includes("concedid") || rStatus.includes("confirmada"))) { match = true; break; }
+                if (stLower.includes("dispensada") && rStatus.includes("dispensad")) { match = true; break; }
+                if (rStatus.includes(stLower)) { match = true; break; }
+            }
+            if (!match) return false;
         }
 
         if (!idxList.includes("Todos")) {
@@ -107,7 +123,15 @@ export function filtrar(rows, filtros) {
 
         if (!pubList.includes("Todos")) {
             const rPub = (r.publico || "").toLowerCase();
-            if (!pubList.some(pb => rPub.includes(pb.toLowerCase()))) return false;
+            let match = false;
+            for (let pb of pubList) {
+                const pbLower = pb.toLowerCase();
+                if (pbLower.includes("profissionais") && rPub.includes("profissional")) { match = true; break; }
+                if (pbLower.includes("qualificados") && rPub.includes("qualificado")) { match = true; break; }
+                if (pbLower.includes("geral") && rPub.includes("geral")) { match = true; break; }
+                if (rPub.includes(pbLower)) { match = true; break; }
+            }
+            if (!match) return false;
         }
 
         if (buscaLower) {

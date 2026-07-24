@@ -1295,16 +1295,32 @@ class CVMDataEngine:
         # 3. Integração em Tempo Real (Scraper D+0)
         try:
             realtime_offers = self._fetch_recent_offers_realtime()
-            existing_ids = {str(u.get("Id_Processo")).strip() for u in unified if u.get("Id_Processo") and u.get("Id_Processo") != "N/A"}
+            existing_by_pid = {}
+            for u in unified:
+                pid = str(u.get("Id_Processo")).strip()
+                if pid and pid != "N/A":
+                    existing_by_pid[pid] = u
             
             added_rt = 0
+            updated_rt = 0
             for rt_off in realtime_offers:
                 pid = str(rt_off.get("Id_Processo")).strip()
-                if pid not in existing_ids:
-                    unified.append(rt_off)
-                    existing_ids.add(pid)
-                    added_rt += 1
-            print(f"[D+0 SCRAPER] Foram integradas {added_rt} ofertas recentes que não constavam no ZIP oficial.")
+                if pid and pid != "N/A":
+                    if pid in existing_by_pid:
+                        ex_row = existing_by_pid[pid]
+                        # Atualiza com informaçoes D+0 se a data do scraper for maior/melhor
+                        if rt_off.get("Data_Clean") and (not ex_row.get("Data_Clean") or rt_off.get("Data_Clean") > ex_row.get("Data_Clean")):
+                            ex_row["Data_Clean"] = rt_off["Data_Clean"]
+                            ex_row["Ano"] = rt_off["Ano"]
+                            if rt_off.get("Status"):
+                                ex_row["Status"] = rt_off["Status"]
+                            updated_rt += 1
+                    else:
+                        unified.append(rt_off)
+                        existing_by_pid[pid] = rt_off
+                        added_rt += 1
+                        
+            print(f"[D+0 SCRAPER] Foram integradas {added_rt} ofertas novas e atualizadas {updated_rt} existentes.")
         except Exception as e:
             print(f"[ERROR] Falha ao processar scraper D+0: {e}")
 

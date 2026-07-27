@@ -1203,6 +1203,12 @@ class CVMDataEngine:
                 issuer_qtys.setdefault((em, at_key), []).append(r["Qtde_Float"])
                 issuer_qtys.setdefault(em, []).append(r["Qtde_Float"])
 
+        # Build series count to divide estimated volume for multi-series offerings
+        series_count = {}
+        for r in unified:
+            key = (r.get("CNPJ_Emissor"), r.get("Ativo"), r.get("Data_Clean"))
+            series_count[key] = series_count.get(key, 0) + 1
+
         # Pass 2: Identificar ofertas com volume em bookbuilding e aplicar honestidade em taxas/alocações
         for r in unified:
             em = r["Emissor"]
@@ -1230,6 +1236,14 @@ class CVMDataEngine:
                         elif "FIDC" in at or "CREDIT" in at: est_vol, est_qty = 100000000.0, 100000.0
                         elif "AÇÃO" in at or "ACOES" in at: est_vol, est_qty = 800000000.0, 40000000.0
                         else: est_vol, est_qty = 200000000.0, 200000.0
+                    
+                    # Divide estimated volume by the number of series to avoid inflating multi-series offerings
+                    key = (r.get("CNPJ_Emissor"), r.get("Ativo"), r.get("Data_Clean"))
+                    s_count = series_count.get(key, 1)
+                    if s_count > 1:
+                        est_vol = round(est_vol / s_count, 2)
+                        est_qty = round(est_qty / s_count, 0)
+
                     r["Volume_Float"] = est_vol
                     r["Qtde_Float"] = est_qty
                 

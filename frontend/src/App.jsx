@@ -88,7 +88,8 @@ const Icons = {
     CheckCircle: () => <svg className="w-4 h-4 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     Clock: () => <svg className="w-4 h-4 text-slate-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     Filter: () => <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>,
-    ExternalLink: ({ className = "w-4 h-4" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+    ExternalLink: ({ className = "w-4 h-4" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>,
+    Layers: ({ className = "w-4 h-4 inline mr-1" }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 12 12 17 22 12"></polyline><polyline points="2 17 12 22 22 17"></polyline></svg>
 };
 
 const ChartWrapper = ({ type, data, options, height = 300, onClick }) => {
@@ -423,9 +424,74 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                     </div>
 
                     {/* Características do Valor Mobiliário (API REST Oficial CVM) */}
-                    {offer.Caracteristicas_CVM && offer.Caracteristicas_CVM.length > 0 && (
-                        <div className="space-y-3">
-                            <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    {/* Características do Valor Mobiliário (API REST Oficial CVM) */}
+                    {offer.Series && offer.Series.length > 0 ? (
+                        <div className="mt-8 space-y-4">
+                            <h4 className="flex items-center space-x-2 text-sm font-bold text-indigo-300 font-display uppercase tracking-wider mb-2">
+                                <Icons.Layers className="w-4 h-4 text-indigo-400" />
+                                <span>Detalhamento das Séries ({offer.Series.length})</span>
+                            </h4>
+                            <div className="space-y-4">
+                                {offer.Series.map((s, idx) => (
+                                    <div key={idx} className="bg-slate-900/80 rounded-xl border border-slate-700/60 overflow-hidden shadow-lg shadow-slate-900/50">
+                                        {/* Cabeçalho da Série */}
+                                        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-700/60">
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-sm font-bold text-white tracking-wide">
+                                                    {s.nome || `${idx + 1}ª Série`}
+                                                </span>
+                                                {s.idx_type && (
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider border ${getIndexerColorClass(s.idx_type)}`}>
+                                                        {s.idx_type}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="text-xs text-slate-400 block mb-0.5">Volume da Série</span>
+                                                <span className="text-sm font-bold text-emerald-400 font-mono tracking-tight">{formatCurrency(s.vol)}</span>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Corpo da Série */}
+                                        <div className="p-4 space-y-4">
+                                            {/* Data e Taxa */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {s.venc && (
+                                                    <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/40">
+                                                        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block mb-1">Vencimento</span>
+                                                        <span className="text-sm font-semibold text-slate-200">{s.venc}</span>
+                                                    </div>
+                                                )}
+                                                {s.taxa && (
+                                                    <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/40 md:col-span-2">
+                                                        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
+                                                        <p className="text-xs text-slate-300 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            {/* Campos Adicionais */}
+                                            {s.campos && s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração").length > 0 && (
+                                                <div className="mt-4">
+                                                    <h5 className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Outras Informações</h5>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                                                        {s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração").map((c, i) => (
+                                                            <div key={i} className="p-2.5 bg-slate-800/20 rounded border border-slate-800/50">
+                                                                <span className="text-[10px] text-slate-500 font-mono block leading-tight">{c.campoNome}</span>
+                                                                <span className="text-[11px] font-medium text-slate-300 mt-1 block break-words">{c.campoValor}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : offer.Caracteristicas_CVM && offer.Caracteristicas_CVM.length > 0 && (
+                        <div className="mt-8">
+                            <h4 className="flex items-center space-x-2 text-sm font-bold text-indigo-300 font-display uppercase tracking-wider mb-4">
                                 <Icons.FileText className="w-4 h-4 text-indigo-400" />
                                 <span>Características do Valor Mobiliário</span>
                                 <span className="text-[10px] font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">API REST SRE</span>
@@ -660,7 +726,7 @@ const App = () => {
             
             // Check if we need to load dataset
             if (datasetVersionRef.current !== d.dataset_version) {
-              const dsRes = await fetch(API_BASE + "/dataset");
+              const dsRes = await fetch(API_BASE + "/dataset?v=" + d.dataset_version);
               if (dsRes.ok) {
                 const dsJson = await dsRes.json();
                 // Hydrate columnar to objects
@@ -1288,9 +1354,18 @@ const App = () => {
                                                         <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate" title={r.Consorcio || r.Lider}>Líder: {r.Lider}</span>
                                                     </td>
                                                     <td className="p-3.5">
-                                                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80 font-mono text-[11px]">
-                                                            {r.Ativo}
-                                                        </span>
+                                                        <div className="flex flex-col gap-1.5 items-start">
+                                                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80 font-mono text-[11px]">
+                                                                {r.Ativo}
+                                                            </span>
+                                                            {r.Series && r.Series.length > 1 && (
+                                                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-[10px]" title={`${r.Series.length} Séries identificadas nesta emissão`}>
+                                                                    <Icons.Layers className="w-2.5 h-2.5 inline mr-1" />
+                                                                    {r.Series.length} Séries
+                                                                </span>
+                                                            )}
+
+                                                        </div>
                                                     </td>
                                                     <td className="p-3.5 whitespace-nowrap">
                                                         <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${getIndexerColorClass(r.Indexador)}`}>

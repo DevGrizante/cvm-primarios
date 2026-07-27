@@ -18,7 +18,7 @@ ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 
 class CVMDataEngine:
     def __init__(self):
@@ -1189,19 +1189,6 @@ class CVMDataEngine:
             self._enter_degraded_mode()
             return
 
-        # Build issuer historical average volume cache
-        import hashlib
-        issuer_vols = {}
-        issuer_qtys = {}
-        for r in unified:
-            em = r["Emissor"]
-            at_key = r["Ativo"]
-            if r["Volume_Float"] > 0:
-                issuer_vols.setdefault((em, at_key), []).append(r["Volume_Float"])
-                issuer_vols.setdefault(em, []).append(r["Volume_Float"])
-            if r["Qtde_Float"] > 0:
-                issuer_qtys.setdefault((em, at_key), []).append(r["Qtde_Float"])
-                issuer_qtys.setdefault(em, []).append(r["Qtde_Float"])
 
         # Build series count to divide estimated volume for multi-series offerings
         series_count = {}
@@ -1223,19 +1210,12 @@ class CVMDataEngine:
             if r["Volume_Float"] <= 0 or r["Qtde_Float"] <= 0 or r.get("Bookbuilding") == "Sim":
                 if r["Volume_Float"] <= 0 or r["Qtde_Float"] <= 0:
                     r["Is_Estimated_Vol"] = True
-                    if (em, at_key) in issuer_vols and len(issuer_vols[(em, at_key)]) > 0:
-                        est_vol = round(sum(issuer_vols[(em, at_key)]) / len(issuer_vols[(em, at_key)]), 2)
-                        est_qty = round(sum(issuer_qtys[(em, at_key)]) / len(issuer_qtys[(em, at_key)]), 0) if (em, at_key) in issuer_qtys and len(issuer_qtys[(em, at_key)]) > 0 else round(est_vol / 1000.0, 0)
-                    elif em in issuer_vols and len(issuer_vols[em]) > 0:
-                        est_vol = round(sum(issuer_vols[em]) / len(issuer_vols[em]), 2)
-                        est_qty = round(sum(issuer_qtys[em]) / len(issuer_qtys[em]), 0) if em in issuer_qtys and len(issuer_qtys[em]) > 0 else round(est_vol / 1000.0, 0)
-                    else:
-                        if "DEB" in at: est_vol, est_qty = 500000000.0, 500000.0
-                        elif any(x in at for x in ("CRI", "IMOBIL", "FII")): est_vol, est_qty = 150000000.0, 150000.0
-                        elif any(x in at for x in ("CRA", "AGRONEG", "FIAGRO")): est_vol, est_qty = 150000000.0, 150000.0
-                        elif "FIDC" in at or "CREDIT" in at: est_vol, est_qty = 100000000.0, 100000.0
-                        elif "AÇÃO" in at or "ACOES" in at: est_vol, est_qty = 800000000.0, 40000000.0
-                        else: est_vol, est_qty = 200000000.0, 200000.0
+                    if "DEB" in at: est_vol, est_qty = 500000000.0, 500000.0
+                    elif any(x in at for x in ("CRI", "IMOBIL", "FII")): est_vol, est_qty = 150000000.0, 150000.0
+                    elif any(x in at for x in ("CRA", "AGRONEG", "FIAGRO")): est_vol, est_qty = 150000000.0, 150000.0
+                    elif "FIDC" in at or "CREDIT" in at: est_vol, est_qty = 100000000.0, 100000.0
+                    elif "AÇÃO" in at or "ACOES" in at: est_vol, est_qty = 800000000.0, 40000000.0
+                    else: est_vol, est_qty = 200000000.0, 200000.0
                     
                     # Divide estimated volume by the number of series to avoid inflating multi-series offerings
                     key = (r.get("CNPJ_Emissor"), r.get("Ativo"), r.get("Data_Clean"))
@@ -1387,20 +1367,100 @@ class CVMDataEngine:
                     if req_id and req_id in cached_sre:
                         matches_count += 1
                         c_data = cached_sre[req_id]
-                        if c_data.get("Taxa_Juros"):
-                            r["Taxa_Juros"] = c_data["Taxa_Juros"]
-                            r["Taxa_Declarada"] = True
-                            r["Remuneracao_API_CVM"] = c_data["Taxa_Juros"]
-                        if c_data.get("Vencimento") and c_data.get("Vencimento") != "N/I":
-                            r["Vencimento"] = c_data["Vencimento"]
-                        if c_data.get("Caracteristicas_CVM"):
-                            r["Caracteristicas_CVM"] = c_data["Caracteristicas_CVM"]
-                        ref, fonte = self._extract_ntnb_reference(r)
-                        r["Referencia_NTNB"] = ref
-                        r["NTNB_Fonte"] = fonte
-                        self._sync_row_indexador(r)
+                        
+                        # Handle new format: {"series": [...], "coordenadores": [...]}
+                        if "series" in c_data:
+                            series_list = c_data["series"]
+                            if series_list:
+                                indexador_vols = {}
+                                total_vol = 0.0
+                                majority_idx_key = None
+                                max_v = -1
+                                
+                                for s_data in series_list:
+                                    v = s_data["vol"]
+                                    total_vol += v
+                                    t = s_data["taxa"].upper()
+                                    if "IPCA" in t or "NTNB" in t or "NTN-B" in t:
+                                        idx_type = "IPCA+"
+                                    elif "CDI" in t or "DI" in t:
+                                        idx_type = "CDI+"
+                                    else:
+                                        idx_type = "PR"
+                                        
+                                    indexador_vols[idx_type] = indexador_vols.get(idx_type, 0.0) + v
+                                
+                                for k, v in indexador_vols.items():
+                                    if v > max_v:
+                                        max_v = v
+                                        majority_idx_key = k
+                                        
+                                majority_series = series_list[0]
+                                for s_data in series_list:
+                                    t = s_data["taxa"].upper()
+                                    if majority_idx_key == "IPCA+" and ("IPCA" in t or "NTNB" in t or "NTN-B" in t):
+                                        majority_series = s_data
+                                        break
+                                    elif majority_idx_key == "CDI+" and ("CDI" in t or "DI" in t):
+                                        majority_series = s_data
+                                        break
+                                    elif majority_idx_key == "PR" and not ("IPCA" in t or "NTNB" in t or "NTN-B" in t or "CDI" in t or "DI" in t):
+                                        majority_series = s_data
+                                        break
+        
+                                r["Volume_Float"] = total_vol
+                                if majority_series["taxa"]:
+                                    r["Taxa_Juros"] = majority_series["taxa"]
+                                    r["Taxa_Declarada"] = True
+                                    r["Remuneracao_API_CVM"] = majority_series["taxa"]
+                                
+                                if majority_idx_key == "IPCA+":
+                                    r["Indexador"] = "IPCA / Infla\xe7\xe3o"
+                                    r["Indexador_Tipo"] = "IPCA+"
+                                elif majority_idx_key == "CDI+":
+                                    r["Indexador"] = "CDI / DI"
+                                    r["Indexador_Tipo"] = "CDI+"
+                                else:
+                                    r["Indexador"] = "PR\xe9 (Prefixado)"
+                                    r["Indexador_Tipo"] = "PR"
+                                    
+                                r["Caracteristicas_CVM"] = majority_series["campos"]
+                                r["Series"] = series_list
+                                
+                                venc_e = majority_series["venc"]
+                                if venc_e:
+                                    if len(venc_e) >= 10 and venc_e[2] == "/":
+                                        parts = venc_e.split("/")
+                                        r["Vencimento"] = f"{parts[1]}/{parts[2][-2:]}"
+                                    elif len(venc_e) >= 10 and venc_e[4] == "-":
+                                        parts = venc_e.split("-")
+                                        r["Vencimento"] = f"{parts[1]}/{parts[0][-2:]}"
+                                    elif len(venc_e) >= 7 and venc_e[2] == "/":
+                                        r["Vencimento"] = f"{venc_e[:2]}/{venc_e[-2:]}"
+                                    else:
+                                        r["Vencimento"] = venc_e[:7]
+                                        
+                                ref, fonte = self._extract_ntnb_reference(r)
+                                r["Referencia_NTNB"] = ref
+                                r["NTNB_Fonte"] = fonte
+                                self._sync_row_indexador(r)
+                        else:
+                            # Handle old format (legacy fallback)
+                            if c_data.get("Taxa_Juros"):
+                                r["Taxa_Juros"] = c_data["Taxa_Juros"]
+                                r["Taxa_Declarada"] = True
+                                r["Remuneracao_API_CVM"] = c_data["Taxa_Juros"]
+                            if c_data.get("Vencimento") and c_data.get("Vencimento") != "N/I":
+                                r["Vencimento"] = c_data["Vencimento"]
+                            if c_data.get("Caracteristicas_CVM"):
+                                r["Caracteristicas_CVM"] = c_data["Caracteristicas_CVM"]
+                            ref, fonte = self._extract_ntnb_reference(r)
+                            r["Referencia_NTNB"] = ref
+                            r["NTNB_Fonte"] = fonte
+                            self._sync_row_indexador(r)
+                
+                    
                 total_rows = max(len(self.rows), 1)
-                print(f"Applied {matches_count} cached SRE enrichments out of {len(cached_sre)} cache entries (match rate: {matches_count/total_rows*100:.1f}% of offerings).")
 
         consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
         self.consorcio_cache = {}
@@ -1505,7 +1565,7 @@ class CVMDataEngine:
             
             candidates = [
                 r for r in self.rows
-                if r.get("Ano") in ("2026", "2025", "2024", "2023")
+                if str(r.get("Ano")).replace(".0", "") in ("2026", "2025", "2024", "2023")
                 and (not r.get("Taxa_Declarada") or not r.get("Vencimento") or r.get("Vencimento") == "N/I" or r.get("Referencia_NTNB") in ("Outras / Não Espec.", "N/I", ""))
                 and (r.get("Numero_Requerimento") or r.get("Id_Processo"))
                 and r.get("Indexador") in ("CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)")
@@ -1520,35 +1580,67 @@ class CVMDataEngine:
                     with urllib.request.urlopen(req, context=ctx, timeout=2.0) as resp:
                         if resp.status == 200:
                             data = json.loads(resp.read().decode("utf-8"))
+                            def _get_idx(t_str):
+                                t_u = str(t_str).upper()
+                                if "IPCA" in t_u or "NTNB" in t_u or "NTN-B" in t_u or "INFLA" in t_u: return "IPCA"
+                                if "CDI" in t_u or "DI " in t_u or " DI" in t_u or "FLUTUANTE" in t_u: return "CDI"
+                                if "PRE" in t_u or "PRÉ" in t_u or "FIXA" in t_u: return "PRE"
+                                return "OUTROS"
+                            def _parse_vol(v_str):
+                                if not v_str: return 0.0
+                                try: return float(str(v_str).replace(".", "").replace(",", "."))
+                                except Exception: return 0.0
+
                             taxa_encontrada = None
                             campos_encontrados = []
                             venc_encontrado = None
+                            series_data = []
+                            
                             if data.get("grupos"):
                                 for g in data["grupos"]:
                                     for s in g.get("series", []):
-                                        for lote_key in ("loteFinal", "loteInicial"):
-                                            lote = s.get(lote_key)
-                                            if lote and isinstance(lote, dict):
-                                                if not campos_encontrados and lote.get("camposCadastrados"):
-                                                    campos_encontrados = lote["camposCadastrados"]
-                                                t = lote.get("taxaRemuneracao", "")
-                                                if t and str(t).strip() and str(t).strip() not in ("-", "--", "N\u00e3o Informado", "0", "0%"):
-                                                    taxa_encontrada = str(t).strip()
-                                                
-                                                if lote.get("camposCadastrados"):
-                                                    for c in lote["camposCadastrados"]:
-                                                        nm = str(c.get("campoNome", "")).lower()
-                                                        val = str(c.get("campoValor", "")).strip()
-                                                        if val and val not in ("-", "--", "Não Informado", "0", "0%", "N/A"):
-                                                            if "venc" in nm or "data de vencimento" in nm:
-                                                                venc_encontrado = val
-                                                            elif "remunera" in nm or "juros" in nm:
-                                                                if "final" in nm:
-                                                                    taxa_encontrada = val
-                                                                elif not taxa_encontrada:
-                                                                    taxa_encontrada = val
-                                                if taxa_encontrada and campos_encontrados and venc_encontrado: break
-                                            if taxa_encontrada and campos_encontrados and venc_encontrado: break
+                                        lote = s.get("loteFinal") or s.get("loteInicial")
+                                        if lote and isinstance(lote, dict):
+                                            s_vol = 0.0
+                                            if lote.get("loteBase") and isinstance(lote["loteBase"], dict):
+                                                s_vol = _parse_vol(lote["loteBase"].get("valorTotal"))
+                                            if s_vol == 0:
+                                                s_vol = _parse_vol(lote.get("valorTotalLote"))
+                                            
+                                            s_taxa = ""
+                                            s_venc = ""
+                                            s_campos = lote.get("camposCadastrados") or []
+                                            
+                                            t = lote.get("taxaRemuneracao", "")
+                                            if t and str(t).strip() and str(t).strip() not in ("-", "--", "N\u00e3o Informado", "0", "0%"):
+                                                s_taxa = str(t).strip()
+                                            
+                                            if s_campos:
+                                                for c in s_campos:
+                                                    nm = str(c.get("campoNome", "")).lower()
+                                                    val = str(c.get("campoValor", "")).strip()
+                                                    if val and val not in ("-", "--", "Não Informado", "0", "0%", "N/A"):
+                                                        if "venc" in nm or "data de vencimento" in nm:
+                                                            s_venc = val
+                                                        elif "remunera" in nm or "juros" in nm:
+                                                            if "final" in nm:
+                                                                s_taxa = val
+                                                            elif not s_taxa:
+                                                                s_taxa = val
+                                            
+                                            idx_type = _get_idx(s_taxa)
+                                            series_data.append({
+                                                "vol": s_vol,
+                                                "taxa": s_taxa,
+                                                "venc": s_venc,
+                                                "campos": s_campos,
+                                                "idx_type": idx_type
+                                            })
+                            
+                            if series_data:
+                                # We no longer aggregate to a dominant series. 
+                                # We return the full list of series_data.
+                                pass
                             
                             coordenadores = []
                             try:
@@ -1563,47 +1655,14 @@ class CVMDataEngine:
                             except Exception:
                                 pass
 
-                            return taxa_encontrada, campos_encontrados, venc_encontrado, coordenadores
+                            return series_data, coordenadores
                 except Exception:
                     pass
-                return None, [], None, []
+                return [], []
 
-            def _apply_row_update(r, taxa_e, campos_e, venc_e, coordenadores_e, req_id):
+            def _apply_row_update(r, series_data_e, coordenadores_e, req_id):
                 updated = False
-                if taxa_e or campos_e or venc_e or coordenadores_e:
-                    if taxa_e:
-                        r["Taxa_Juros"] = taxa_e
-                        r["Taxa_Declarada"] = True
-                        r["Remuneracao_API_CVM"] = taxa_e
-                        taxa_upper = taxa_e.upper()
-                        if "IPCA" in taxa_upper or "NTNB" in taxa_upper or "NTN-B" in taxa_upper:
-                            r["Indexador"] = "IPCA+"
-                            r["Indexador_Tipo"] = "IPCA+"
-                        elif "CDI" in taxa_upper or "DI" in taxa_upper:
-                            r["Indexador"] = "CDI+"
-                            r["Indexador_Tipo"] = "CDI+"
-                        elif "PRÉ-FIXADA" in taxa_upper or "PREFIXADA" in taxa_upper or "PRE-FIXADA" in taxa_upper:
-                            r["Indexador"] = "PRÉ (Prefixado)"
-                            r["Indexador_Tipo"] = "PRÉ"
-                        else:
-                            r["Indexador"] = "PRÉ (Prefixado)"
-                            r["Indexador_Tipo"] = "PRÉ"
-                        updated = True
-                    if campos_e:
-                        r["Caracteristicas_CVM"] = campos_e
-                        updated = True
-                    if venc_e:
-                        if len(venc_e) >= 10 and venc_e[2] == "/":
-                            parts = venc_e.split("/")
-                            r["Vencimento"] = f"{parts[1]}/{parts[2][-2:]}"
-                        elif len(venc_e) >= 10 and venc_e[4] == "-":
-                            parts = venc_e.split("-")
-                            r["Vencimento"] = f"{parts[1]}/{parts[0][-2:]}"
-                        elif len(venc_e) >= 7 and venc_e[2] == "/":
-                            r["Vencimento"] = f"{venc_e[:2]}/{venc_e[-2:]}"
-                        else:
-                            r["Vencimento"] = venc_e[:7]
-                        updated = True
+                if series_data_e or coordenadores_e:
                     if coordenadores_e:
                         norm_coords = []
                         for c in coordenadores_e:
@@ -1617,14 +1676,85 @@ class CVMDataEngine:
                             self.consorcio_cache[req_id] = norm_coords
                             r["Coordenadores_Todos"] = norm_coords
                             updated = True
-                    ref, fonte = self._extract_ntnb_reference(r)
-                    r["Referencia_NTNB"] = ref
-                    r["NTNB_Fonte"] = fonte
-                    self._sync_row_indexador(r)
+                            
+                    if series_data_e:
+                        indexador_vols = {}
+                        total_vol = 0.0
+                        majority_idx_key = None
+                        max_v = -1
+                        
+                        for s_data in series_data_e:
+                            v = s_data["vol"]
+                            total_vol += v
+                            t = s_data["taxa"].upper()
+                            if "IPCA" in t or "NTNB" in t or "NTN-B" in t:
+                                idx_type = "IPCA+"
+                            elif "CDI" in t or "DI" in t:
+                                idx_type = "CDI+"
+                            else:
+                                idx_type = "PR"
+                                
+                            indexador_vols[idx_type] = indexador_vols.get(idx_type, 0.0) + v
+                        
+                        for k, v in indexador_vols.items():
+                            if v > max_v:
+                                max_v = v
+                                majority_idx_key = k
+                                
+                        majority_series = series_data_e[0]
+                        for s_data in series_data_e:
+                            t = s_data["taxa"].upper()
+                            if majority_idx_key == "IPCA+" and ("IPCA" in t or "NTNB" in t or "NTN-B" in t):
+                                majority_series = s_data
+                                break
+                            elif majority_idx_key == "CDI+" and ("CDI" in t or "DI" in t):
+                                majority_series = s_data
+                                break
+                            elif majority_idx_key == "PR" and not ("IPCA" in t or "NTNB" in t or "NTN-B" in t or "CDI" in t or "DI" in t):
+                                majority_series = s_data
+                                break
+
+                        r["Volume_Float"] = total_vol
+                        r["Taxa_Juros"] = majority_series["taxa"]
+                        r["Taxa_Declarada"] = True
+                        r["Remuneracao_API_CVM"] = majority_series["taxa"]
+                        
+                        if majority_idx_key == "IPCA+":
+                            r["Indexador"] = "IPCA / Infla\xe7\xe3o"
+                            r["Indexador_Tipo"] = "IPCA+"
+                        elif majority_idx_key == "CDI+":
+                            r["Indexador"] = "CDI / DI"
+                            r["Indexador_Tipo"] = "CDI+"
+                        else:
+                            r["Indexador"] = "PR\xe9 (Prefixado)"
+                            r["Indexador_Tipo"] = "PR"
+                            
+                        r["Caracteristicas_CVM"] = majority_series["campos"]
+                        r["Series"] = series_data_e
+                        
+                        venc_e = majority_series["venc"]
+                        if venc_e:
+                            if len(venc_e) >= 10 and venc_e[2] == "/":
+                                parts = venc_e.split("/")
+                                r["Vencimento"] = f"{parts[1]}/{parts[2][-2:]}"
+                            elif len(venc_e) >= 10 and venc_e[4] == "-":
+                                parts = venc_e.split("-")
+                                r["Vencimento"] = f"{parts[1]}/{parts[0][-2:]}"
+                            elif len(venc_e) >= 7 and venc_e[2] == "/":
+                                r["Vencimento"] = f"{venc_e[:2]}/{venc_e[-2:]}"
+                            else:
+                                r["Vencimento"] = venc_e[:7]
+                                
+                        ref, fonte = self._extract_ntnb_reference(r)
+                        r["Referencia_NTNB"] = ref
+                        r["NTNB_Fonte"] = fonte
+                        self._sync_row_indexador(r)
+                        
+                        updated = True
+                        
                     cached_sre[req_id] = {
-                        "Taxa_Juros": taxa_e,
-                        "Vencimento": r.get("Vencimento"),
-                        "Caracteristicas_CVM": campos_e
+                        "series": series_data_e,
+                        "coordenadores": coordenadores_e
                     }
                 return updated
 
@@ -1653,19 +1783,30 @@ class CVMDataEngine:
                 batch_updated = False
                 
                 def _process_one(r):
-                    req_id = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+                    raw_req = str(r.get("Numero_Requerimento") or "").strip()
+                    if raw_req.endswith(".0"):
+                        raw_req = raw_req[:-2]
+                    req_id = r.get("_Original_Req_Id") or raw_req
+                    
+                    if '27212' in req_id:
+                        print(f"DEBUG REQ_ID: '{req_id}', isdigit={req_id.isdigit()}, in_cache={req_id in cached_sre}")
                     if not req_id or not req_id.isdigit() or req_id in cached_sre:
                         return False
-                    tx, cp, vn, cd = _fetch_api_sre(req_id)
-                    return _apply_row_update(r, tx, cp, vn, cd, req_id)
+                    
+                    series_e, cd = _fetch_api_sre(req_id)
+                    return _apply_row_update(r, series_e, cd, req_id)
                 
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    results = list(executor.map(_process_one, batch))
-                
-                for res in results:
-                    if res:
-                        updated_count += 1
-                        batch_updated = True
+                    futures = {executor.submit(_process_one, r): r for r in batch}
+                    for f in as_completed(futures):
+                        try:
+                            batch_updated_flag = f.result()
+                            if batch_updated_flag:
+                                batch_updated = True
+                                updated_count += 1
+                        except Exception as e:
+                            print(f"WORKER ERR: {e}")
+                            
                         
                 if batch_updated and updated_count >= 20:
                     _save_sre_cache()
@@ -1794,7 +1935,7 @@ class CVMDataEngine:
             'Indexador', 'Taxa_Juros', 'Volume_Float', 'Is_Estimated_Vol', 'Taxa_Declarada',
             'Lider', 'Consorcio', 'Status', 'Rito', 'Regime', 'Publico_Alvo', 'Referencia_NTNB',
             'NTNB_Fonte', 'Vencimento', 'ESG', 'Vol_Pessoa_Fisica', 'Vol_Fundos', 'Vol_Estrangeiro',
-            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos'
+            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos', 'Series'
         ]
         
         rows_colunares = []
@@ -1823,7 +1964,7 @@ class CVMDataEngine:
                 r.get('Indexador', ''), r.get('Taxa_Juros', ''), r.get('Volume_Float', 0.0), bool(r.get('Is_Estimated_Vol', False)), not bool(r.get('Is_Estimated_Vol', False)),
                 r.get('Lider', ''), r.get('Lider', ''), r.get('Status', ''), r.get('Rito', ''), r.get('Regime', ''), r.get('Publico_Alvo', ''), r.get('Referencia_NTNB', ''),
                 r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'), r.get('Vol_Pessoa_Fisica', 0.0), r.get('Vol_Fundos', 0.0), r.get('Vol_Estrangeiro', 0.0),
-                r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), coords_list
+                r.get('Vol_Previdencia', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Seguradoras', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Vol_Instituicoes', 0.0), r.get('Alocacao_Pendente', 0.0), r.get('CNPJ_Emissor', ''), coords_list, r.get('Series', [])
             ])
             
         dataset = {

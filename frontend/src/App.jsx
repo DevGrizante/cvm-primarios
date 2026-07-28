@@ -740,7 +740,7 @@ const App = () => {
         status: getInitialUrlParams().get("status") || "Todos",
         indexador: getInitialUrlParams().get("indexador") || "Todos",
         publico: getInitialUrlParams().get("publico") || "Todos",
-        regime: getInitialUrlParams().get("regime") || "Todos",
+        volume_min: getInitialUrlParams().get("volume_min") || "Todos",
         incluir_estimados: getInitialUrlParams().get("incluir_estimados") === "true" || false,
         data_de: getInitialUrlParams().get("data_de") || "2023-01",
         data_ate: getInitialUrlParams().get("data_ate") || ""
@@ -875,7 +875,7 @@ const App = () => {
         if (filters.indexador !== "Todos") params.set("indexador", filters.indexador);
         if (filters.status !== "Todos") params.set("status", filters.status);
         if (filters.publico !== "Todos") params.set("publico", filters.publico);
-        if (filters.regime !== "Todos") params.set("regime", filters.regime);
+        if (filters.volume_min !== "Todos") params.set("volume_min", filters.volume_min);
         if (filters.incluir_estimados) params.set("incluir_estimados", "true");
         if (filters.data_de) params.set("data_de", filters.data_de);
         if (filters.data_ate) params.set("data_ate", filters.data_ate);
@@ -1320,15 +1320,15 @@ const App = () => {
                         </div>
 
                         <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Regime / Rito</label>
+                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Volume</label>
                             <select
-                                value={filters.regime}
-                                onChange={(e) => handleFilterChange("regime", e.target.value)}
+                                value={filters.volume_min}
+                                onChange={(e) => handleFilterChange("volume_min", e.target.value)}
                                 className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-                                <option value="Todos">Todos os Regimes</option>
-                                <option value="Resolução CVM 160">Resolução CVM 160</option>
-                                <option value="ICVM 400">ICVM 400 (Antigo Varejo)</option>
-                                <option value="ICVM 476">ICVM 476 (Antigo Restrito)</option>
+                                <option value="Todos">Todos os Volumes</option>
+                                <option value=">100MM">&gt; 100MM</option>
+                                <option value=">500MM">&gt; 500MM</option>
+                                <option value=">1Bi">&gt; 1Bi</option>
                             </select>
                         </div>
 

@@ -24,7 +24,7 @@ export function filtrar(rows, filtros) {
     const statusList = toList(filtros.status);
     const idxList = toList(filtros.indexador);
     const pubList = toList(filtros.publico);
-    const regList = toList(filtros.regime);
+    const volMinList = toList(filtros.volume_min);
     const buscaLower = (filtros.busca || "").toLowerCase().trim();
     const dataDe = (filtros.data_de || "").trim();
     const dataAte = (filtros.data_ate || "").trim();
@@ -45,16 +45,12 @@ export function filtrar(rows, filtros) {
             return false;
         }
 
-        if (!regList.includes("Todos")) {
+        if (!volMinList.includes("Todos") && volMinList.length > 0) {
             let match = false;
-            for (let reg of regList) {
-                const regLower = reg.toLowerCase();
-                const rRegLower = (r.regime || "").toLowerCase();
-                if (regLower.includes("160") && rRegLower.includes("160")) { match = true; break; }
-                if (regLower.includes("hist") && (rRegLower.includes("icvm") || rRegLower.includes("400") || rRegLower.includes("476"))) { match = true; break; }
-                if (reg === "160" && rRegLower.includes("160")) { match = true; break; }
-                if (reg === "hist" && rRegLower.includes("icvm")) { match = true; break; }
-                if (rRegLower.includes(regLower)) { match = true; break; }
+            for (let v of volMinList) {
+                if (v === ">100MM" && r.volume > 100000000) match = true;
+                if (v === ">500MM" && r.volume > 500000000) match = true;
+                if (v === ">1Bi" && r.volume > 1000000000) match = true;
             }
             if (!match) return false;
         }

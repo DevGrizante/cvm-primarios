@@ -87,6 +87,7 @@ const Icons = {
     AlertCircle: () => <svg className="w-4 h-4 text-amber-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     CheckCircle: () => <svg className="w-4 h-4 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     Clock: () => <svg className="w-4 h-4 text-slate-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+    Calendar: ({ className = "w-4 h-4 inline mr-1" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>,
     Filter: () => <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>,
     ExternalLink: ({ className = "w-4 h-4" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>,
     Layers: ({ className = "w-4 h-4 inline mr-1" }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 12 12 17 22 12"></polyline><polyline points="2 17 12 22 22 17"></polyline></svg>
@@ -253,6 +254,37 @@ const DateRangeSlider = ({ minDateStr = "2023-01", maxDateStr = "2026-07", curre
 };
 
 // Slide-over Drawer (Dossiê Executivo da Mesa)
+class DrawerErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null, info: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true };
+    }
+    componentDidCatch(error, info) {
+        this.setState({ error, info });
+        console.error("Drawer Error:", error, info);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="fixed inset-y-0 right-0 w-full md:w-[600px] xl:w-[700px] bg-slate-900 border-l border-slate-700/50 shadow-2xl flex flex-col z-50 p-6 text-red-400 font-mono text-sm overflow-y-auto">
+                    <h2 className="text-xl font-bold text-red-500 mb-4">CRITICAL RENDER ERROR</h2>
+                    <p className="mb-2">Por favor, envie o seguinte erro para o assistente:</p>
+                    <div className="bg-red-950/50 p-4 rounded border border-red-900/50 break-words whitespace-pre-wrap">
+                        {this.state.error?.toString()}
+                        <br/><br/>
+                        {this.state.info?.componentStack}
+                    </div>
+                    <button onClick={this.props.onClose} className="mt-6 px-4 py-2 bg-slate-800 text-white rounded">Fechar</button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalItems, currentIndex, onUpdateOffer }) => {
     if (!initialOffer) return null;
     const [liveOffer, setLiveOffer] = useState(initialOffer);
@@ -445,6 +477,11 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                         {s.idx_type}
                                                     </span>
                                                 )}
+                                                {s.ticker && (
+                                                    <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                                        {s.ticker}
+                                                    </span>
+                                                )}
                                             </div>
                                             <div className="text-right">
                                                 <span className="text-xs text-slate-400 block mb-0.5">Volume da Série</span>
@@ -462,6 +499,14 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                         <span className="text-sm font-semibold text-slate-200">{s.venc}</span>
                                                     </div>
                                                 )}
+                                                {s.data_rentabilidade && (
+                                                    <div className="bg-slate-800/40 p-3 rounded-lg border border-amber-500/20 shadow-inner">
+                                                        <span className="flex items-center text-[10px] text-amber-400/80 font-mono uppercase tracking-wider mb-1">
+                                                            <Icons.Calendar className="w-3 h-3 mr-1 inline" /> Rentabilidade
+                                                        </span>
+                                                        <span className="text-sm font-semibold text-amber-100">{s.data_rentabilidade}</span>
+                                                    </div>
+                                                )}
                                                 {s.taxa && (
                                                     <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/40 md:col-span-2">
                                                         <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
@@ -471,11 +516,11 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                             </div>
                                             
                                             {/* Campos Adicionais */}
-                                            {s.campos && s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração").length > 0 && (
+                                            {s.campos && s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração" && !(s.data_rentabilidade && c.campoNome === "Data de emissão")).length > 0 && (
                                                 <div className="mt-4">
                                                     <h5 className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Outras Informações</h5>
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                                                        {s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração").map((c, i) => (
+                                                        {s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração" && !(s.data_rentabilidade && c.campoNome === "Data de emissão")).map((c, i) => (
                                                             <div key={i} className="p-2.5 bg-slate-800/20 rounded border border-slate-800/50">
                                                                 <span className="text-[10px] text-slate-500 font-mono block leading-tight">{c.campoNome}</span>
                                                                 <span className="text-[11px] font-medium text-slate-300 mt-1 block break-words">{c.campoValor}</span>
@@ -497,12 +542,27 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 <span className="text-[10px] font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">API REST SRE</span>
                             </h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 bg-slate-900/40 p-3 rounded-lg border border-slate-800/60 max-h-60 overflow-y-auto">
-                                {offer.Caracteristicas_CVM.filter(c => c.visivel && c.campoValor).map((c, i) => (
-                                    <div key={i} className="p-2 bg-slate-800/40 rounded border border-slate-800">
-                                        <span className="text-[11px] text-slate-400 font-mono uppercase block">{c.campoNome}</span>
-                                        <span className="text-xs font-medium text-slate-200 mt-0.5 block break-words">{c.campoValor}</span>
-                                    </div>
-                                ))}
+                                {(() => {
+                                    let cList = [];
+                                    if (Array.isArray(offer.Caracteristicas_CVM)) {
+                                        cList = offer.Caracteristicas_CVM;
+                                    } else if (typeof offer.Caracteristicas_CVM === 'string') {
+                                        try {
+                                            const parsed = JSON.parse(offer.Caracteristicas_CVM);
+                                            if (parsed.grupos && parsed.grupos[0]?.series?.[0]?.loteFinal?.camposCadastrados) {
+                                                cList = parsed.grupos[0].series[0].loteFinal.camposCadastrados;
+                                            } else {
+                                                cList = Array.isArray(parsed) ? parsed : [];
+                                            }
+                                        } catch(e) { cList = []; }
+                                    }
+                                    return cList.filter(c => c.visivel && c.campoValor).map((c, i) => (
+                                        <div key={i} className="p-2 bg-slate-800/40 rounded border border-slate-800">
+                                            <span className="text-[11px] text-slate-400 font-mono uppercase block">{c.campoNome}</span>
+                                            <span className="text-xs font-medium text-slate-200 mt-0.5 block break-words">{c.campoValor}</span>
+                                        </div>
+                                    ));
+                                })()}
                             </div>
                         </div>
                     )}
@@ -613,12 +673,14 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             <span className="text-slate-500 block">Coordenador / Consórcio</span>
                             <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>Líder: {offer.Lider}</span>
                             {(() => {
-                                const liderUpper = (offer.Lider || "").toUpperCase().trim();
-                                const demaisCoords = (offer.Coordenadores_Todos || []).filter(c => {
-                                    const coordUpper = (c || "").toUpperCase().trim();
+                                const liderUpper = String(offer.Lider || "").toUpperCase().trim();
+                                const coordsRaw = Array.isArray(offer.Coordenadores_Todos) ? offer.Coordenadores_Todos : (offer.Coordenadores_Todos?.coordenadores || []);
+                                const demaisCoords = coordsRaw.filter(c => {
+                                    const coordName = typeof c === 'object' && c !== null ? (c.participante || c.nome || "") : String(c || "");
+                                    const coordUpper = coordName.toUpperCase().trim();
                                     if (!liderUpper || !coordUpper) return false;
                                     return coordUpper !== liderUpper && !coordUpper.includes(liderUpper) && !liderUpper.includes(coordUpper);
-                                });
+                                }).map(c => typeof c === 'object' && c !== null ? (c.participante || c.nome || "") : String(c || ""));
                                 
                                 if (demaisCoords.length === 0) return null;
                                 
@@ -1962,19 +2024,24 @@ const App = () => {
             </main>
 
             {/* Slide-over Drawer Dossier */}
-            <DrawerLateralDossie
-                offer={selectedOffer}
-                onClose={() => setSelectedOffer(null)}
-                onNavigate={handleDrawerNavigate}
-                totalItems={offersData.items.length}
-                currentIndex={selectedOffer ? offersData.items.findIndex(o => o.Id_Processo === selectedOffer.Id_Processo) : -1}
-                onUpdateOffer={(updated) => {
-                    setOffersData(prev => ({
-                        ...prev,
-                        items: prev.items.map(it => it.Id_Processo === updated.Id_Processo ? updated : it)
-                    }));
-                }}
-            />
+            {selectedOffer && (
+                <DrawerErrorBoundary onClose={() => setSelectedOffer(null)}>
+                    <DrawerLateralDossie 
+                        offer={selectedOffer} 
+                        onClose={() => setSelectedOffer(null)} 
+                        onNavigate={handleDrawerNavigate}
+                        totalItems={offersData.items.length}
+                        currentIndex={offersData.items.findIndex(o => o.Id_Processo === selectedOffer.Id_Processo)}
+                        onUpdateOffer={(updated) => {
+                            setOffersData(prev => ({
+                                ...prev,
+                                items: prev.items.map(it => it.Id_Processo === updated.Id_Processo ? updated : it)
+                            }));
+                            setSelectedOffer(updated);
+                        }}
+                    />
+                </DrawerErrorBoundary>
+            )}
 
             {/* Footer */}
             <footer className="glass-header mt-auto py-6 px-6 text-center text-xs text-slate-500 font-mono">

@@ -18,7 +18,7 @@ ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 
 class CVMDataEngine:
     def __init__(self):
@@ -33,6 +33,15 @@ class CVMDataEngine:
             "progresso": 0,
             "pronto": False
         }
+        self.secondary_market = {}
+        try:
+            import os, json
+            sm_path = os.path.join(os.path.dirname(__file__), "secondary_market.json")
+            if os.path.exists(sm_path):
+                with open(sm_path, "r", encoding="utf-8") as f:
+                    self.secondary_market = json.load(f)
+        except Exception as e:
+            print(f"Erro ao carregar secondary_market.json: {e}")
 
     def _ultimo_slot(self, agora=None):
         if agora is None:
@@ -1935,7 +1944,7 @@ class CVMDataEngine:
             'Indexador', 'Taxa_Juros', 'Volume_Float', 'Is_Estimated_Vol', 'Taxa_Declarada',
             'Lider', 'Consorcio', 'Status', 'Rito', 'Regime', 'Publico_Alvo', 'Referencia_NTNB',
             'NTNB_Fonte', 'Vencimento', 'ESG', 'Vol_Pessoa_Fisica', 'Vol_Fundos', 'Vol_Estrangeiro',
-            'Vol_Previdencia', 'Vol_Seguradora', 'Vol_Seguradoras', 'Vol_Institucional', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos', 'Series'
+            'Vol_Previdencia', 'Vol_Seguradoras', 'Vol_Seguradoras', 'Vol_Instituicoes', 'Vol_Instituicoes', 'Alocacao_Pendente', 'CNPJ_Emissor', 'Coordenadores_Todos', 'Series'
         ]
         
         rows_colunares = []
@@ -1948,6 +1957,29 @@ class CVMDataEngine:
             if not ct:
                 ct = r.get('Consorcio_List') or []
             coords_list = [str(c) for c in ct if c and str(c).strip() and str(c) != "Não Informado"]
+            
+            # Inject Secondary Market Mapping
+            series_list = r.get('Series', [])
+            
+            # Synthesize single series if missing so frontend logic and ticker mapping works consistently
+            if not series_list:
+                series_list = [{
+                    "vol": r.get("Volume_Float") or 0.0,
+                    "taxa": r.get("Taxa_Juros") or "",
+                    "venc": r.get("Vencimento") or "",
+                    "campos": r.get("Caracteristicas_CVM") or [],
+                    "idx_type": r.get("Indexador_Tipo") or ""
+                }]
+                r["Series"] = series_list
+                
+            cnpj = r.get('CNPJ_Emissor', '')
+            if series_list and cnpj and getattr(self, 'secondary_market', None):
+                if cnpj in self.secondary_market:
+                    for s_idx, s_data in enumerate(series_list):
+                        mapping = self.secondary_market[cnpj].get(str(s_idx + 1))
+                        if mapping:
+                            s_data["ticker"] = mapping.get("ticker")
+                            s_data["data_rentabilidade"] = mapping.get("data_rentabilidade")
 
             # Optimize nulls/empty strings to None or empty to save bytes
             r_id = r.get('Numero_Requerimento') or r.get('Id_Processo') or ''

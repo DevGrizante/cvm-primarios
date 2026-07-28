@@ -1,0 +1,40 @@
+{
+    "43.094.886/0001-92": {
+        "1": {
+            "ticker": "ORIG11",
+            "data_rentabilidade": "15/08/2026"
+        },
+        "2": {
+            "ticker": "ORIG12",
+            "data_rentabilidade": "15/08/2026"
+        },
+        "3": {
+            "ticker": "ORIG13",
+            "data_rentabilidade": "15/08/2026"
+        }
+    },
+    "29.694.063/0001-77": {
+        "1": {
+            "ticker": "CARB11",
+            "data_rentabilidade": "22/07/2026"
+        }
+    },
+    "04.368.898/0001-06": {
+        "1": {
+            "ticker": "COPL11",
+            "data_rentabilidade": "21/07/2026"
+        }
+    },
+    "07.140.538/0001-40": {
+        "1": {
+            "ticker": "AUTO11",
+            "data_rentabilidade": "21/07/2026"
+        }
+    },
+    "02.998.611/0001-04": {
+        "1": {
+            "ticker": "ISAE11",
+            "data_rentabilidade": "21/07/2026"
+        }
+    }
+}

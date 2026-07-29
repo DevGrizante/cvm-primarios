@@ -1988,17 +1988,21 @@ class CVMDataEngine:
                 for s_idx, s_data in enumerate(series_list):
                     venc_cvm = str(s_data.get('venc', '')).strip()
                     venc_mm_yyyy = ""
+                    venc_exact = ""
                     # Regex for YYYY-MM-DD
                     m1 = re.match(r'(\d{4})-(\d{2})-(\d{2})', venc_cvm)
                     if m1:
+                        venc_exact = f"{m1.group(3)}_{m1.group(2)}_{m1.group(1)}"
                         venc_mm_yyyy = f"{m1.group(2)}_{m1.group(1)}"
                     else:
                         # Regex for DD/MM/YYYY
                         m_ddmmyyyy = re.search(r'(\d{1,2})/(\d{1,2})/(\d{2,4})', venc_cvm)
                         if m_ddmmyyyy:
+                            dd = m_ddmmyyyy.group(1).zfill(2)
                             mm = m_ddmmyyyy.group(2).zfill(2)
                             yy = m_ddmmyyyy.group(3)
                             if len(yy) == 2: yy = "20" + yy
+                            venc_exact = f"{dd}_{mm}_{yy}"
                             venc_mm_yyyy = f"{mm}_{yy}"
                         else:
                             # Regex for MM/YY or MM/YYYY
@@ -2009,8 +2013,15 @@ class CVMDataEngine:
                                 if len(yy) == 2: yy = "20" + yy
                                 venc_mm_yyyy = f"{mm}_{yy}"
                             
-                    key = f"{cnpj}_{venc_mm_yyyy}_{s_idx + 1}"
-                    mapping = self.secondary_market.get(key)
+                    key_exact = f"{cnpj}_{venc_exact}_{s_idx + 1}" if venc_exact else ""
+                    key_mmyyyy = f"{cnpj}_{venc_mm_yyyy}_{s_idx + 1}"
+                    
+                    mapping = None
+                    if key_exact:
+                        mapping = self.secondary_market.get(key_exact)
+                    if not mapping:
+                        mapping = self.secondary_market.get(key_mmyyyy)
+                        
                     if mapping:
                         s_data["ticker"] = mapping.get("ticker")
                         s_data["data_rentabilidade"] = mapping.get("data_rentabilidade")
@@ -2046,7 +2057,10 @@ class CVMDataEngine:
         gzipped = gzip.compress(json_bytes, compresslevel=6) # Balanced speed/compression
         
         # Calculate dataset version hash
-        self.dataset_version = hashlib.md5((str(self.last_update) + str(len(self.rows)) + str(SCHEMA_VERSION)).encode()).hexdigest()[:8]
+        import os
+        sec_market_path = os.path.join(os.path.dirname(__file__), 'secondary_market.json')
+        sec_market_time = os.path.getmtime(sec_market_path) if os.path.exists(sec_market_path) else 0
+        self.dataset_version = hashlib.md5((str(self.last_update) + str(len(self.rows)) + str(SCHEMA_VERSION) + str(sec_market_time)).encode()).hexdigest()[:8]
         self.columnar_dataset = dataset
         self.columnar_gzip = gzipped
         

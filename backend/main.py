@@ -299,6 +299,7 @@ def get_dashboard(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
@@ -311,15 +312,15 @@ def get_dashboard(
         return cached
 
     ano_val = _val(ano); rito_val = _val(rito); ativo_val = _val(ativo); status_val = _val(status)
-    indexador_val = _val(indexador); publico_val = _val(publico); regime_val = _val(regime); busca_val = _val(busca)
+    indexador_val = _val(indexador); publico_val = _val(publico); regime_val = _val(regime); volume_min_val = _val(volume_min); busca_val = _val(busca)
     data_de_val = _val(data_de); data_ate_val = _val(data_ate)
     
     rows = engine.get_filtered_rows(ano_val, rito_val, ativo_val, status_val, indexador_val, publico_val, regime_val, busca_val, data_de_val, data_ate_val)
     
-    kpis_data = get_kpis(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, cached_rows=rows)
-    overview_data = get_charts_overview(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, modo_coordenador=modo_coordenador, cached_rows=rows)
-    investors_data = get_charts_investors(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, cached_rows=rows)
-    rankings_data = get_rankings(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, busca=busca, data_de=data_de, data_ate=data_ate, limit=100, incluir_estimados=incluir_estimados, modo_coordenador=modo_coordenador, cached_rows=rows)
+    kpis_data = get_kpis(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, volume_min=volume_min, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, cached_rows=rows)
+    overview_data = get_charts_overview(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, volume_min=volume_min, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, modo_coordenador=modo_coordenador, cached_rows=rows)
+    investors_data = get_charts_investors(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, volume_min=volume_min, busca=busca, data_de=data_de, data_ate=data_ate, incluir_estimados=incluir_estimados, cached_rows=rows)
+    rankings_data = get_rankings(ano=ano, rito=rito, ativo=ativo, status=status, indexador=indexador, publico=publico, regime=regime, volume_min=volume_min, busca=busca, data_de=data_de, data_ate=data_ate, limit=100, incluir_estimados=incluir_estimados, modo_coordenador=modo_coordenador, cached_rows=rows)
     
     payload = {
         "kpis": kpis_data,
@@ -339,6 +340,7 @@ def get_kpis(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
@@ -346,7 +348,7 @@ def get_kpis(
     cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
-    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); volume_min = _val(volume_min); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     
@@ -418,6 +420,7 @@ def get_charts_overview(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
@@ -426,7 +429,7 @@ def get_charts_overview(
     cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
-    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); volume_min = _val(volume_min); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
@@ -699,6 +702,7 @@ def get_charts_investors(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
@@ -706,7 +710,7 @@ def get_charts_investors(
     cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
-    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); volume_min = _val(volume_min); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
@@ -775,6 +779,7 @@ def get_rankings(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
@@ -784,7 +789,7 @@ def get_rankings(
     cached_rows: Optional[List[dict]] = None
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
-    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca); limit = _val(limit)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); volume_min = _val(volume_min); busca = _val(busca); limit = _val(limit)
     data_de = _val(data_de); data_ate = _val(data_ate)
     inc_est = str(_val(incluir_estimados)).lower() in ("true", "1", "sim", "yes")
     rows = cached_rows if cached_rows is not None else engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
@@ -844,6 +849,7 @@ def get_offers(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query(""),
@@ -853,7 +859,7 @@ def get_offers(
     sort_order: str = Query("desc")
 ):
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
-    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); volume_min = _val(volume_min); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     page = _val(page); page_size = _val(page_size); sort_by = _val(sort_by); sort_order = _val(sort_order)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
@@ -935,6 +941,47 @@ def get_offer_detail(id_processo: str):
     for r in engine.rows:
         if str(r.get("Id_Processo")).strip() == clean_id or str(r.get("Numero_Requerimento")).strip() == clean_id:
             detalhe = _enrich_offer_from_api(r).copy()
+            
+            # Inject Secondary Market Mapping dynamically to ensure fresh data
+            cnpj = detalhe.get("CNPJ_Emissor", "")
+            series_list = detalhe.get("Series", [])
+            sec_market = getattr(engine, "secondary_market", {})
+            if series_list and cnpj and sec_market:
+                import re
+                for s_idx, s_data in enumerate(series_list):
+                    venc_cvm = str(s_data.get('venc', '')).strip()
+                    venc_mm_yyyy = ""
+                    # Regex for YYYY-MM-DD
+                    m1 = re.match(r'(\d{4})-(\d{2})-(\d{2})', venc_cvm)
+                    if m1:
+                        venc_mm_yyyy = f"{m1.group(2)}_{m1.group(1)}"
+                    else:
+                        # Regex for DD/MM/YYYY
+                        m_ddmmyyyy = re.search(r'(\d{1,2})/(\d{1,2})/(\d{2,4})', venc_cvm)
+                        if m_ddmmyyyy:
+                            mm = m_ddmmyyyy.group(2).zfill(2)
+                            yy = m_ddmmyyyy.group(3)
+                            if len(yy) == 2: yy = "20" + yy
+                            venc_mm_yyyy = f"{mm}_{yy}"
+                        else:
+                            # Regex for MM/YY or MM/YYYY
+                            m2 = re.search(r'(\d{1,2})/(\d{2,4})', venc_cvm)
+                            if m2:
+                                mm = m2.group(1).zfill(2)
+                                yy = m2.group(2)
+                                if len(yy) == 2: yy = "20" + yy
+                                venc_mm_yyyy = f"{mm}_{yy}"
+                            
+                    key = f"{cnpj}_{venc_mm_yyyy}_{s_idx + 1}"
+                    mapping = sec_market.get(key)
+                    if mapping:
+                        s_data["ticker"] = mapping.get("ticker")
+                        s_data["data_rentabilidade"] = mapping.get("data_rentabilidade")
+                        if mapping.get("rentabilidade"):
+                            s_data["taxa"] = mapping.get("rentabilidade")
+                        if mapping.get("isin"):
+                            s_data["isin"] = mapping.get("isin")
+                            
             ct = r.get("Coordenadores_Todos")
             if isinstance(ct, dict):
                 ct = ct.get("coordenadores") or []
@@ -954,6 +1001,7 @@ def export_offers(
     indexador: Union[List[str], str] = Query("Todos"),
     publico: Union[List[str], str] = Query("Todos"),
     regime: Union[List[str], str] = Query("Todos"),
+    volume_min: Union[List[str], str] = Query("Todos"),
     busca: str = Query(""),
     data_de: str = Query(""),
     data_ate: str = Query("")
@@ -966,7 +1014,7 @@ def export_offers(
     _EXPORT_RATE_LIMIT[ip].append(now)
 
     ano = _val(ano); rito = _val(rito); ativo = _val(ativo); status = _val(status)
-    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); busca = _val(busca)
+    indexador = _val(indexador); publico = _val(publico); regime = _val(regime); volume_min = _val(volume_min); busca = _val(busca)
     data_de = _val(data_de); data_ate = _val(data_ate)
     rows = engine.get_filtered_rows(ano, rito, ativo, status, indexador, publico, regime, busca, data_de, data_ate)
     

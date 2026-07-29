@@ -1831,7 +1831,7 @@ class CVMDataEngine:
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
 
-    def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", busca="", data_de="", data_ate=""):
+    def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", volume_min="Todos", busca="", data_de="", data_ate=""):
         def _to_list(val):
             if isinstance(val, (list, tuple, set)):
                 if not val:
@@ -1856,6 +1856,7 @@ class CVMDataEngine:
         idx_list = _to_list(indexador)
         pub_list = _to_list(publico)
         reg_list = _to_list(regime)
+        vol_list = _to_list(volume_min)
         busca_lower = busca.lower() if busca else ""
         
         has_date_range = bool((data_de and str(data_de).strip() not in ("Todos", "")) or (data_ate and str(data_ate).strip() not in ("Todos", "")))
@@ -1879,6 +1880,15 @@ class CVMDataEngine:
                     elif reg_item == "hist" and "ICVM" in r["Regime"]: match_reg = True; break
                     elif reg_item.lower() in r["Regime"].lower(): match_reg = True; break
                 if not match_reg: continue
+            
+            if "Todos" not in vol_list:
+                match_vol = False
+                offer_vol = r.get("Volume_Float") or 0.0
+                for vol_item in vol_list:
+                    if vol_item == ">100MM" and offer_vol > 100000000: match_vol = True; break
+                    elif vol_item == ">500MM" and offer_vol > 500000000: match_vol = True; break
+                    elif vol_item == ">1Bi" and offer_vol > 1000000000: match_vol = True; break
+                if not match_vol: continue
             
             if has_date_range:
                 r_dt = r.get("_ym") or str(r.get("Data_Clean", ""))[:7]
@@ -1974,12 +1984,40 @@ class CVMDataEngine:
                 
             cnpj = r.get('CNPJ_Emissor', '')
             if series_list and cnpj and getattr(self, 'secondary_market', None):
-                if cnpj in self.secondary_market:
-                    for s_idx, s_data in enumerate(series_list):
-                        mapping = self.secondary_market[cnpj].get(str(s_idx + 1))
-                        if mapping:
-                            s_data["ticker"] = mapping.get("ticker")
-                            s_data["data_rentabilidade"] = mapping.get("data_rentabilidade")
+                import re
+                for s_idx, s_data in enumerate(series_list):
+                    venc_cvm = str(s_data.get('venc', '')).strip()
+                    venc_mm_yyyy = ""
+                    # Regex for YYYY-MM-DD
+                    m1 = re.match(r'(\d{4})-(\d{2})-(\d{2})', venc_cvm)
+                    if m1:
+                        venc_mm_yyyy = f"{m1.group(2)}_{m1.group(1)}"
+                    else:
+                        # Regex for DD/MM/YYYY
+                        m_ddmmyyyy = re.search(r'(\d{1,2})/(\d{1,2})/(\d{2,4})', venc_cvm)
+                        if m_ddmmyyyy:
+                            mm = m_ddmmyyyy.group(2).zfill(2)
+                            yy = m_ddmmyyyy.group(3)
+                            if len(yy) == 2: yy = "20" + yy
+                            venc_mm_yyyy = f"{mm}_{yy}"
+                        else:
+                            # Regex for MM/YY or MM/YYYY
+                            m2 = re.search(r'(\d{1,2})/(\d{2,4})', venc_cvm)
+                            if m2:
+                                mm = m2.group(1).zfill(2)
+                                yy = m2.group(2)
+                                if len(yy) == 2: yy = "20" + yy
+                                venc_mm_yyyy = f"{mm}_{yy}"
+                            
+                    key = f"{cnpj}_{venc_mm_yyyy}_{s_idx + 1}"
+                    mapping = self.secondary_market.get(key)
+                    if mapping:
+                        s_data["ticker"] = mapping.get("ticker")
+                        s_data["data_rentabilidade"] = mapping.get("data_rentabilidade")
+                        if mapping.get("rentabilidade"):
+                            s_data["taxa"] = mapping.get("rentabilidade")
+                        if mapping.get("isin"):
+                            s_data["isin"] = mapping.get("isin")
 
             # Optimize nulls/empty strings to None or empty to save bytes
             r_id = r.get('Numero_Requerimento') or r.get('Id_Processo') or ''

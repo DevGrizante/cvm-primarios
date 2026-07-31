@@ -1058,6 +1058,17 @@ def export_offers(
 
 frontend_dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+
+# Add middleware to prevent caching of the frontend HTML
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 if os.path.exists(frontend_dist_dir):
     app.mount("/", StaticFiles(directory=frontend_dist_dir, html=True), name="frontend")
 elif os.path.exists(frontend_dir):

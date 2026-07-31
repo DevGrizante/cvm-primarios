@@ -257,6 +257,7 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
     const emissores = {};
     const monthlyVol = {};
     const monthlyIdx = {};
+    const yearlyIdx = {};
     const spreadCdi = {};
     const spreadIpca = {};
     const cdiPoints = [];
@@ -306,6 +307,13 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
             else if (il.includes("ipca") || il.includes("infla") || il.includes("inpc")) monthlyIdx[dt].IPCA += v;
             else if (il.includes("pré") || il.includes("pre")) monthlyIdx[dt].PRE += v;
             else monthlyIdx[dt].OUTROS += v;
+
+            const yr = dt.substring(0, 4);
+            if (!yearlyIdx[yr]) yearlyIdx[yr] = { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 };
+            if (il.includes("cdi") || il.includes("di")) yearlyIdx[yr].CDI += v;
+            else if (il.includes("ipca") || il.includes("infla") || il.includes("inpc")) yearlyIdx[yr].IPCA += v;
+            else if (il.includes("pré") || il.includes("pre")) yearlyIdx[yr].PRE += v;
+            else yearlyIdx[yr].OUTROS += v;
         }
 
         // Vencimento x Spread
@@ -397,7 +405,13 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
             outros: sortedMonths.map(m => monthlyIdx[m].OUTROS)
         },
         monthly_volume: null, // used in some places
-        yearly_indexer: null, // not heavily used without temporal
+        yearly_indexer: {
+            labels: Object.keys(yearlyIdx).sort(),
+            cdi: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].CDI),
+            ipca: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].IPCA),
+            pre: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].PRE),
+            outros: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].OUTROS)
+        },
         top_coordenadores: {
             labels: topLideresList.map(x => x.label),
             volumes: topLideresList.map(x => Number(x.v.toFixed(2))),

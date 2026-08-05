@@ -1549,6 +1549,25 @@ class CVMDataEngine:
             with open(tmp_p, "w", encoding="utf-8") as f:
                 json.dump(cached, f, ensure_ascii=False)
             os.replace(tmp_p, sre_cache_path)
+            
+            # Update memory representation immediately
+            updated = False
+            for r in self.rows:
+                rid = str(r.get("Numero_Requerimento") or r.get("Id_Processo") or "").strip()
+                if rid == req_id:
+                    if taxa:
+                        r["Taxa_Juros"] = taxa
+                        r["Taxa_Declarada"] = True
+                        r["Remuneracao_API_CVM"] = taxa
+                    if vencimento:
+                        r["Vencimento"] = vencimento
+                    if caracteristicas:
+                        r["Caracteristicas_CVM"] = caracteristicas
+                    updated = True
+            
+            if updated:
+                self._build_columnar_dataset()
+                
         except Exception:
             pass
 
@@ -1831,7 +1850,7 @@ class CVMDataEngine:
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
 
-    def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", volume_min="Todos", busca="", data_de="", data_ate=""):
+    def get_filtered_rows(self, ano="Recentes (2023-2026)", rito="Todos", ativo="Todos", status="Todos", indexador="Todos", publico="Todos", regime="Todos", volume_min="Todos", busca="", data_de="", data_ate="", coordenador="Todos"):
         def _to_list(val):
             if isinstance(val, (list, tuple, set)):
                 if not val:
@@ -1842,12 +1861,10 @@ class CVMDataEngine:
                 if not items or any(i == "Todos" or i.startswith("Todos os") for i in items):
                     return ["Todos"]
                 return items
-            if not val:
+            val_str = str(val).strip()
+            if not val_str or val_str == "Todos" or val_str.startswith("Todos os"):
                 return ["Todos"]
-            items = [i.strip() for i in str(val).split(",") if i.strip()]
-            if not items or any(i == "Todos" or i.startswith("Todos os") for i in items):
-                return ["Todos"]
-            return items
+            return [i.strip() for i in val_str.split(",") if i.strip()]
 
         ano_list = _to_list(ano)
         rito_list = _to_list(rito)
@@ -1857,27 +1874,24 @@ class CVMDataEngine:
         pub_list = _to_list(publico)
         reg_list = _to_list(regime)
         vol_list = _to_list(volume_min)
-        busca_lower = busca.lower() if busca else ""
+        coord_list = _to_list(coordenador)
         
-        has_date_range = bool((data_de and str(data_de).strip() not in ("Todos", "")) or (data_ate and str(data_ate).strip() not in ("Todos", "")))
-        de_str = str(data_de).strip()[:7] if (data_de and str(data_de).strip() not in ("Todos", "")) else ""
-        if de_str and de_str < "2023-01":
-            de_str = "2023-01"
-        ate_str = str(data_ate).strip()[:7] if (data_ate and str(data_ate).strip() not in ("Todos", "")) else ""
+        busca_lower = str(busca).strip().lower()
+        de_str = str(data_de).strip()
+        ate_str = str(data_ate).strip()
+        has_date_range = bool(de_str or ate_str)
         
         res = []
         for r in self.rows:
-            r_dt = r.get("_ym") or str(r.get("Data_Clean", ""))[:7]
-            r_ano = str(r.get("Ano", "")).strip()
-            if len(r_dt) >= 7 and r_dt[:4].isdigit():
-                if r_dt < "2023-01": continue
-            elif r_ano.isdigit() and r_ano < "2023": continue
-
             if "Todos" not in reg_list:
                 match_reg = False
                 for reg_item in reg_list:
-                    if reg_item == "160" and "160" in r["Regime"]: match_reg = True; break
-                    elif reg_item == "hist" and "ICVM" in r["Regime"]: match_reg = True; break
+                    if reg_item == "CVM 160":
+                        if "CVM 160" in r["Regime"] or "Automático" in r["Rito"] or "Ordinário" in r["Rito"]: match_reg = True; break
+                    elif reg_item == "Instrução 476":
+                        if "476" in r["Regime"] or "Esforços Restritos" in r["Regime"]: match_reg = True; break
+                    elif reg_item == "Instrução 400":
+                        if "400" in r["Regime"] or "Antiga 400" in r["Regime"]: match_reg = True; break
                     elif reg_item.lower() in r["Regime"].lower(): match_reg = True; break
                 if not match_reg: continue
             
@@ -1893,7 +1907,6 @@ class CVMDataEngine:
             if has_date_range:
                 r_dt = r.get("_ym") or str(r.get("Data_Clean", ""))[:7]
                 if len(r_dt) >= 7 and r_dt[:4].isdigit():
-                    if r_dt < "2023-01": continue
                     if de_str and r_dt < de_str: continue
                     if ate_str and r_dt > ate_str: continue
                 else:
@@ -1930,6 +1943,19 @@ class CVMDataEngine:
                 
             if "Todos" not in pub_list:
                 if not any(pb.lower() in r["Publico_Alvo"].lower() for pb in pub_list): continue
+                
+            if "Todos" not in coord_list:
+                coords = set(r.get("Coordenadores_Todos") or [])
+                lider = r.get("Lider")
+                if lider and lider != "Nao Informado":
+                    coords.add(lider)
+                
+                match_coord = False
+                for c in coord_list:
+                    if any(c.lower() in str(rc).lower() for rc in coords):
+                        match_coord = True
+                        break
+                if not match_coord: continue
             
             if busca_lower:
                 if busca_lower not in (r.get("_busca") or f"{r.get('Emissor','')} {r.get('Lider','')} {r.get('Consorcio','')} {r.get('Id_Processo','')} {r.get('Ativo','')} {r.get('Status','')}").lower():

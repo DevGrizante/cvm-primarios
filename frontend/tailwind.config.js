@@ -10,10 +10,19 @@ export default {
     extend: {
       fontFamily: {
         sans: ['Inter', 'sans-serif'],
-        display: ['Outfit', 'sans-serif'],
+        display: ['Montserrat', 'Outfit', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
       },
       colors: {
+        bgc: {
+          blue: '#0033A0',
+          'light-blue': '#0072CE',
+          navy: '#001A4D',
+          white: '#FFFFFF',
+          platinum: '#F4F5F7',
+          green: '#0B8A44',
+          red: '#D32F2F',
+        },
         cvm: {
           gold: '#F6C144',
           emerald: '#10B981',

@@ -51,6 +51,36 @@ const formatNumber = (val) => {
     return val.toLocaleString("pt-BR");
 };
 
+const formatTaxa = (taxa) => {
+    if (!taxa) return taxa;
+    let t = taxa;
+    
+    // Summary logic for long verbose CVM texts
+    if (t.includes("taxas médias diárias do DI") || t.includes("Depósito Interfinanceiro")) {
+        const spreadMatch = t.match(/acrescida de spread.*?de\s*([\d,]+%)/i) || 
+                            t.match(/acrescida de sobretaxa.*?de\s*([\d,]+%)/i) || 
+                            t.match(/acrescida de.*?([\d,]+%)/i);
+        if (spreadMatch) {
+            return `CDI + ${spreadMatch[1]} a.a.`;
+        }
+        return "100% CDI";
+    }
+    
+    if (t.includes("Juros remuneratórios pré-fixados correspondentes a")) {
+        const preMatch = t.match(/correspondentes a.*?([\d,]+%)/i);
+        if (preMatch) {
+            return `PRÉ + ${preMatch[1]} a.a.`;
+        }
+    }
+    
+    // Truncate cleanly if still too long
+    if (t.length > 70) {
+        return t.substring(0, 67) + "...";
+    }
+    
+    return t;
+};
+
 const formatDate = (dateStr) => {
     if (!dateStr || typeof dateStr !== "string") return "-";
     const parts = dateStr.split("T")[0].split("-");
@@ -72,21 +102,23 @@ const API_BASE = getApiBase();
 
 // Professional Lucide Vector Icons
 const Icons = {
+    Sun: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
+    Moon: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>,
     TrendingUp: () => <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>,
     Shield: () => <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>,
-    Search: () => <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
-    X: () => <svg className="w-5 h-5 text-slate-400 hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>,
+    Search: () => <svg className="w-4 h-4 text-slate-500 dark:text-slate-400 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
+    X: () => <svg className="w-5 h-5 text-slate-500 dark:text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>,
     ChevronUp: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>,
     ChevronDown: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>,
-    Download: () => <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>,
-    RefreshCw: () => <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+    Download: () => <svg className="w-4 h-4 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>,
+    RefreshCw: () => <svg className="w-4 h-4 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
     BarChart2: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 20V10M12 20V4M6 20v-6" /></svg>,
     PieChart: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>,
     Award: () => <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     FileText: () => <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
     AlertCircle: () => <svg className="w-4 h-4 text-amber-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     CheckCircle: () => <svg className="w-4 h-4 text-emerald-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-    Clock: () => <svg className="w-4 h-4 text-slate-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+    Clock: () => <svg className="w-4 h-4 text-slate-500 dark:text-slate-400 dark:text-slate-400 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     Calendar: ({ className = "w-4 h-4 inline mr-1" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>,
     Filter: () => <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>,
     ExternalLink: ({ className = "w-4 h-4" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>,
@@ -141,7 +173,7 @@ const ChartWrapper = ({ type, data, options, height = 300, onClick }) => {
 const OffersTableSkeleton = () => (
     <div className="space-y-3 p-4">
         {[...Array(8)].map((_, i) => (
-            <div key={i} className="flex items-center space-x-4 p-3 bg-slate-900/50 rounded border border-slate-800/60 animate-pulse">
+            <div key={i} className="flex items-center space-x-4 p-3 bg-slate-100 dark:bg-slate-900/50 rounded border border-slate-200 dark:border-slate-800/60 animate-pulse">
                 <div className="w-24 h-5 skeleton-bar rounded"></div>
                 <div className="w-16 h-5 skeleton-bar rounded"></div>
                 <div className="w-48 h-5 skeleton-bar rounded flex-1"></div>
@@ -208,15 +240,15 @@ const DateRangeSlider = ({ minDateStr = "2023-01", maxDateStr = "2026-07", curre
     const rightPercent = Math.max(0, Math.min(100, ((endVal - minVal) / (maxVal - minVal || 1)) * 100));
 
     return (
-        <div className={className || "flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/90 border border-slate-700/80 px-4 py-2.5 rounded-xl shadow-inner w-full mb-3"}>
-            <div className="flex items-center space-x-1.5 text-xs font-mono text-slate-300 whitespace-nowrap shrink-0">
+        <div className={className || "flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700/80 px-4 py-2.5 rounded-xl shadow-inner w-full mb-3"}>
+            <div className="flex items-center space-x-1.5 text-xs font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
                 <span className="text-indigo-400 font-bold flex items-center gap-1"><Icons.Filter /> Faixa:</span>
-                <span className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 text-[11px] font-semibold text-emerald-300">{formatDisplay(startVal)}</span>
-                <span className="text-slate-500">-</span>
-                <span className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 text-[11px] font-semibold text-emerald-300">{formatDisplay(endVal)}</span>
+                <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-emerald-300">{formatDisplay(startVal)}</span>
+                <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400">-</span>
+                <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-emerald-300">{formatDisplay(endVal)}</span>
             </div>
             <div className="relative w-full h-6 flex items-center min-w-[120px] px-2 flex-1">
-                <div className="absolute left-2 right-2 h-2 bg-slate-800 rounded-full"></div>
+                <div className="absolute left-2 right-2 h-2 bg-slate-100 dark:bg-slate-800 rounded-full"></div>
                 <div 
                     className="absolute h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 rounded-full transition-all duration-75"
                     style={{ left: `calc(${leftPercent}% + 8px - ${leftPercent * 0.16}px)`, width: `calc(${rightPercent - leftPercent}% - ${(rightPercent - leftPercent) * 0.16}px)` }}
@@ -244,7 +276,7 @@ const DateRangeSlider = ({ minDateStr = "2023-01", maxDateStr = "2026-07", curre
                 <button 
                     onClick={() => onChange("", "")}
                     title="Limpar faixa de datas (voltar para seletor de Ano)"
-                    className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded text-[11px] font-mono whitespace-nowrap transition-colors flex items-center gap-1 border border-slate-700 shrink-0"
+                    className="text-slate-500 dark:text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded text-[11px] font-mono whitespace-nowrap transition-colors flex items-center gap-1 border border-slate-200 dark:border-slate-700 shrink-0"
                 >
                     <Icons.RefreshCw /> <span>Reset</span>
                 </button>
@@ -269,7 +301,7 @@ class DrawerErrorBoundary extends React.Component {
     render() {
         if (this.state.hasError) {
             return (
-                <div className="fixed inset-y-0 right-0 w-full md:w-[600px] xl:w-[700px] bg-slate-900 border-l border-slate-700/50 shadow-2xl flex flex-col z-50 p-6 text-red-400 font-mono text-sm overflow-y-auto">
+                <div className="fixed inset-y-0 right-0 w-full md:w-[600px] xl:w-[700px] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700/50 shadow-2xl flex flex-col z-50 p-6 text-red-400 font-mono text-sm overflow-y-auto">
                     <h2 className="text-xl font-bold text-red-500 mb-4">CRITICAL RENDER ERROR</h2>
                     <p className="mb-2">Por favor, envie o seguinte erro para o assistente:</p>
                     <div className="bg-red-950/50 p-4 rounded border border-red-900/50 break-words whitespace-pre-wrap">
@@ -277,7 +309,7 @@ class DrawerErrorBoundary extends React.Component {
                         <br/><br/>
                         {this.state.info?.componentStack}
                     </div>
-                    <button onClick={this.props.onClose} className="mt-6 px-4 py-2 bg-slate-800 text-white rounded">Fechar</button>
+                    <button onClick={this.props.onClose} className="mt-6 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded">Fechar</button>
                 </div>
             );
         }
@@ -323,7 +355,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
         if (idx === "IPCA / Inflação") return "bg-amber-500/15 text-amber-400 border-amber-500/30";
         if (idx === "CDI / DI") return "bg-indigo-500/15 text-indigo-400 border-indigo-500/30";
         if (idx === "PRÉ (Prefixado)") return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-        return "bg-slate-800 text-slate-300 border-slate-700";
+        return "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700";
     };
 
     const isTaxaConfirmada = offer.Taxa_Declarada || (offer.Taxa_Juros && !offer.Taxa_Juros.includes("a Definir") && !offer.Taxa_Juros.includes("Não Informado"));
@@ -331,23 +363,23 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
 
     return (
         <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end transition-opacity duration-300">
-            <div className="w-full md:w-[700px] bg-cvm-card border-l border-slate-800 shadow-2xl flex flex-col h-full drawer-slide-in">
+            <div className="w-full md:w-[700px] bg-white dark:bg-cvm-card border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col h-full drawer-slide-in">
                 {/* Drawer Header */}
-                <div className="p-5 glass-header flex items-center justify-between border-b border-slate-800">
+                <div className="p-5 glass-header flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
                     <div className="flex items-center space-x-3">
                         <span className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
                             <Icons.FileText />
                         </span>
                         <div>
                             <div className="flex items-center gap-2">
-                                <span className="text-xs font-mono text-slate-400 uppercase tracking-wider block">Dossiê de Auditoria Executiva</span>
+                                <span className="text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider block">Dossiê de Auditoria Executiva</span>
                                 {loadingApi && (
                                     <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse flex items-center">
                                         <Icons.RefreshCw className="w-3 h-3 animate-spin mr-1.5" /> Consultando API CVM...
                                     </span>
                                 )}
                             </div>
-                            <h3 className="text-lg font-bold text-white font-display truncate max-w-[360px]" title={offer.Emissor}>{offer.Emissor}</h3>
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display truncate max-w-[360px]" title={offer.Emissor}>{offer.Emissor}</h3>
                         </div>
                     </div>
                     
@@ -357,7 +389,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             onClick={() => onNavigate("prev")} 
                             disabled={currentIndex <= 0}
                             title="Oferta Anterior (Cima)"
-                            className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded text-slate-300 flex items-center space-x-1 text-xs font-mono border border-slate-700">
+                            className="p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded text-slate-600 dark:text-slate-300 flex items-center space-x-1 text-xs font-mono border border-slate-200 dark:border-slate-700">
                             <Icons.ChevronUp />
                             <span>&uarr;</span>
                         </button>
@@ -365,15 +397,15 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             onClick={() => onNavigate("next")} 
                             disabled={currentIndex >= totalItems - 1}
                             title="Próxima Oferta (Baixo)"
-                            className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded text-slate-300 flex items-center space-x-1 text-xs font-mono border border-slate-700">
+                            className="p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded text-slate-600 dark:text-slate-300 flex items-center space-x-1 text-xs font-mono border border-slate-200 dark:border-slate-700">
                             <Icons.ChevronDown />
                             <span>&darr;</span>
                         </button>
-                        <div className="h-6 w-[1px] bg-slate-800 mx-1"></div>
+                        <div className="h-6 w-[1px] bg-slate-100 dark:bg-slate-800 mx-1"></div>
                         <button 
                             onClick={onClose} 
                             title="Fechar (Esc)"
-                            className="p-2 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 rounded text-slate-400 transition-colors border border-slate-700">
+                            className="p-2 bg-slate-800/80 hover:bg-red-500/20 hover:text-red-400 rounded text-slate-500 dark:text-slate-400 dark:text-slate-400 transition-colors border border-slate-200 dark:border-slate-700">
                             <Icons.X />
                         </button>
                     </div>
@@ -383,16 +415,16 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {/* Executive Summary Cards */}
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div className="p-4 bg-slate-900/60 rounded-xl border border-slate-800">
-                            <span className="text-xs text-slate-400 block mb-1">Volume Oficial Registrado</span>
+                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 block mb-1">Volume Oficial Registrado</span>
                             <span className="text-xl font-bold text-emerald-400 font-display">{formatCurrency(offer.Volume_Float)}</span>
                         </div>
-                        <div className="p-4 bg-slate-900/60 rounded-xl border border-slate-800">
-                            <span className="text-xs text-slate-400 block mb-1">Ativo / Tipo</span>
-                            <span className="text-base font-semibold text-white truncate block" title={offer.Ativo}>{offer.Ativo}</span>
+                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 block mb-1">Ativo / Tipo</span>
+                            <span className="text-base font-semibold text-slate-900 dark:text-white truncate block" title={offer.Ativo}>{offer.Ativo}</span>
                         </div>
-                        <div className="p-4 bg-slate-900/60 rounded-xl border border-slate-800 col-span-2 md:col-span-1">
-                            <span className="text-xs text-slate-400 block mb-1">Status CVM</span>
+                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 col-span-2 md:col-span-1">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 block mb-1">Status CVM</span>
                             <span className="text-xs font-semibold text-indigo-300 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 inline-block mt-0.5">
                                 {offer.Status}
                             </span>
@@ -400,9 +432,9 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                     </div>
 
                     {/* Credit Desk Remuneration Section (Spotless Audit) */}
-                    <div className="p-5 bg-slate-900/80 rounded-xl border border-slate-800/80 space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                            <span className="text-sm font-semibold text-slate-300 flex items-center">
+                    <div className="p-5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800/80 space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+                            <span className="text-sm font-semibold text-slate-600 dark:text-slate-300 flex items-center">
                                 <Icons.Award />
                                 <span className="ml-1.5">Remuneração e Indexador da Oferta</span>
                             </span>
@@ -413,8 +445,8 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
                             <div>
-                                <span className="text-xs text-slate-400 block">Indexador Encontrado</span>
-                                <span className="text-sm font-semibold text-slate-200 mt-0.5 flex items-center">
+                                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Indexador Encontrado</span>
+                                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-0.5 flex items-center">
                                     {offer.Indexador || "Não Informado"}
                                     {!offer.Indexador_Inferido || offer.Taxa_Declarada ? (
                                         <span className="ml-2 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 inline-flex items-center">
@@ -428,7 +460,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 </span>
                             </div>
                             <div>
-                                <span className="text-xs text-slate-400 block">Status da Remuneração (Spread/Juros)</span>
+                                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Status da Remuneração (Spread/Juros)</span>
                                 <span className="text-sm font-semibold mt-0.5 block">
                                     {isTaxaConfirmada ? (
                                         <span className="text-emerald-400">{offer.Taxa_Juros}</span>
@@ -447,7 +479,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 href={offer.Link_CVM_SRE || (offer.Numero_Requerimento || offer.Id_Processo ? `https://web.cvm.gov.br/app/sre-publico/#/oferta-publica/${offer.Numero_Requerimento || offer.Id_Processo}` : "#")}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/25 border border-indigo-400/30 w-full"
+                                className="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-slate-900 dark:text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/25 border border-indigo-400/30 w-full"
                             >
                                 <Icons.ExternalLink className="w-4 h-4 shrink-0" />
                                 <span>Ver Oferta Completa no SRE (CVM) ↗</span>
@@ -465,11 +497,11 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             </h4>
                             <div className="space-y-4">
                                 {offer.Series.map((s, idx) => (
-                                    <div key={idx} className="bg-slate-900/80 rounded-xl border border-slate-700/60 overflow-hidden shadow-lg shadow-slate-900/50">
+                                    <div key={idx} className="bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-700/60 overflow-hidden shadow-lg shadow-slate-900/50">
                                         {/* Cabeçalho da Série */}
                                         <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-700/60">
                                             <div className="flex items-center gap-3">
-                                                <span className="text-sm font-bold text-white tracking-wide">
+                                                <span className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">
                                                     {s.nome || `${idx + 1}ª Série`}
                                                 </span>
                                                 {s.idx_type && (
@@ -484,7 +516,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                 )}
                                             </div>
                                             <div className="text-right">
-                                                <span className="text-xs text-slate-400 block mb-0.5">Volume da Série</span>
+                                                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 block mb-0.5">Volume da Série</span>
                                                 <span className="text-sm font-bold text-emerald-400 font-mono tracking-tight">{formatCurrency(s.vol)}</span>
                                             </div>
                                         </div>
@@ -494,13 +526,13 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                             {/* Data e Taxa */}
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 {s.venc && (
-                                                    <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/40">
-                                                        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block mb-1">Vencimento</span>
-                                                        <span className="text-sm font-semibold text-slate-200">{s.venc}</span>
+                                                    <div className="bg-slate-100 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-700/40">
+                                                        <span className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono uppercase tracking-wider block mb-1">Vencimento</span>
+                                                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{s.venc}</span>
                                                     </div>
                                                 )}
                                                 {s.data_rentabilidade && (
-                                                    <div className="bg-slate-800/40 p-3 rounded-lg border border-amber-500/20 shadow-inner">
+                                                    <div className="bg-slate-100 dark:bg-slate-800/40 p-3 rounded-lg border border-amber-500/20 shadow-inner">
                                                         <span className="flex items-center text-[10px] text-amber-400/80 font-mono uppercase tracking-wider mb-1">
                                                             <Icons.Calendar className="w-3 h-3 mr-1 inline" /> Rentabilidade
                                                         </span>
@@ -508,9 +540,9 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                     </div>
                                                 )}
                                                 {s.taxa && (
-                                                    <div className="bg-slate-800/40 p-3 rounded-lg border border-slate-700/40 md:col-span-2">
-                                                        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
-                                                        <p className="text-xs text-slate-300 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
+                                                    <div className="bg-slate-100 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-700/40 md:col-span-2">
+                                                        <span className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
+                                                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
                                                     </div>
                                                 )}
                                             </div>
@@ -518,12 +550,12 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                             {/* Campos Adicionais */}
                                             {s.campos && s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração" && !(s.data_rentabilidade && c.campoNome === "Data de emissão")).length > 0 && (
                                                 <div className="mt-4">
-                                                    <h5 className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Outras Informações</h5>
+                                                    <h5 className="text-[10px] font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-200 dark:border-slate-800 pb-1">Outras Informações</h5>
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
                                                         {s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração" && !(s.data_rentabilidade && c.campoNome === "Data de emissão")).map((c, i) => (
                                                             <div key={i} className="p-2.5 bg-slate-800/20 rounded border border-slate-800/50">
-                                                                <span className="text-[10px] text-slate-500 font-mono block leading-tight">{c.campoNome}</span>
-                                                                <span className="text-[11px] font-medium text-slate-300 mt-1 block break-words">{c.campoValor}</span>
+                                                                <span className="text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono block leading-tight">{c.campoNome}</span>
+                                                                <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-1 block break-words">{c.campoValor}</span>
                                                             </div>
                                                         ))}
                                                     </div>
@@ -541,7 +573,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 <span>Características do Valor Mobiliário</span>
                                 <span className="text-[10px] font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">API REST SRE</span>
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 bg-slate-900/40 p-3 rounded-lg border border-slate-800/60 max-h-60 overflow-y-auto">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-900/40 p-3 rounded-lg border border-slate-200 dark:border-slate-800/60 max-h-60 overflow-y-auto">
                                 {(() => {
                                     let cList = [];
                                     if (Array.isArray(offer.Caracteristicas_CVM)) {
@@ -557,9 +589,9 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                         } catch(e) { cList = []; }
                                     }
                                     return cList.filter(c => c.visivel && c.campoValor).map((c, i) => (
-                                        <div key={i} className="p-2 bg-slate-800/40 rounded border border-slate-800">
-                                            <span className="text-[11px] text-slate-400 font-mono uppercase block">{c.campoNome}</span>
-                                            <span className="text-xs font-medium text-slate-200 mt-0.5 block break-words">{c.campoValor}</span>
+                                        <div key={i} className="p-2 bg-slate-100 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-800">
+                                            <span className="text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono uppercase block">{c.campoNome}</span>
+                                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200 mt-0.5 block break-words">{c.campoValor}</span>
                                         </div>
                                     ));
                                 })()}
@@ -591,14 +623,14 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
 
                         return (
                             <div className="space-y-3">
-                                <div className="bg-slate-900/95 rounded-xl border border-slate-700/80 shadow-xl overflow-hidden">
-                                    <div className="bg-gradient-to-r from-[#002850] via-slate-900 to-slate-900 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
+                                <div className="bg-white/95 dark:bg-slate-900/95 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-xl overflow-hidden">
+                                    <div className="bg-gradient-to-r from-[#002850] via-slate-900 to-slate-900 border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
                                         <div>
                                             <h4 className="text-sm font-bold text-blue-300 tracking-wide font-display flex items-center gap-2">
                                                 <Icons.BarChart2 className="w-4 h-4 text-blue-400" />
                                                 Dados de Colocação
                                             </h4>
-                                            <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+                                            <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono mt-0.5 block">
                                                 Data Encerramento: {offer.Data_Encerramento || offer.Data_Registro || offer.Data_Clean || "Em andamento"}
                                             </span>
                                         </div>
@@ -615,7 +647,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
 
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-left text-xs">
-                                            <thead className="bg-[#003366] text-white uppercase font-mono text-[11px] border-b border-blue-800">
+                                            <thead className="bg-[#003366] text-slate-900 dark:text-white uppercase font-mono text-[11px] border-b border-blue-800">
                                                 <tr>
                                                     <th className="py-3 px-4 font-bold border-r border-blue-800/60 min-w-[260px]">Segmento / Categoria do Investidor</th>
                                                     <th className="py-3 px-4 text-right font-bold border-r border-blue-800/60 bg-[#002850] min-w-[120px]">Número de Investidores</th>
@@ -623,21 +655,21 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                     <th className="py-3 px-4 text-right font-bold min-w-[85px] text-blue-200">Share (%)</th>
                                                 </tr>
                                             </thead>
-                                            <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                                            <tbody className="divide-y divide-slate-800/80 text-slate-600 dark:text-slate-300">
                                                 {demogList.map((row, idx) => {
                                                     const sharePct = ((row.vol_alocado || 0) / baseFloat) * 100;
                                                     return (
-                                                        <tr key={idx} className="odd:bg-slate-950/60 even:bg-slate-900/30 hover:bg-slate-800/60 transition-colors">
-                                                            <td className="py-2.5 px-4 font-medium text-slate-200 border-r border-slate-800/60 leading-snug">
+                                                        <tr key={idx} className="odd:bg-slate-100 dark:odd:bg-slate-950/60 even:bg-slate-50 dark:even:bg-slate-900/30 hover:bg-slate-200 dark:hover:bg-slate-800/60 transition-colors">
+                                                            <td className="py-2.5 px-4 font-medium text-slate-700 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800/60 leading-snug">
                                                                 {row.categoria}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-slate-300 bg-slate-900/30">
+                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-200 dark:border-slate-800/60 text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/30">
                                                                 {Number(row.investidores || 0).toLocaleString("pt-BR")}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-800/60 text-emerald-400 bg-slate-900/30">
+                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-200 dark:border-slate-800/60 text-emerald-400 bg-slate-50 dark:bg-slate-900/30">
                                                                 {formatCurrency(row.vol_alocado || 0)}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono text-slate-400 font-semibold">
+                                                            <td className="py-2.5 px-4 text-right font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 font-semibold">
                                                                 {sharePct.toFixed(2)}%
                                                             </td>
                                                         </tr>
@@ -649,7 +681,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                     <td className="py-3 px-4 uppercase tracking-wider border-r border-blue-900">Total da Oferta / Colocação</td>
                                                     <td className="py-3 px-4 text-right border-r border-blue-900 text-amber-300">{totalInv.toLocaleString("pt-BR")}</td>
                                                     <td className="py-3 px-4 text-right border-r border-blue-900 text-emerald-300">{formatCurrency(offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : totalVol)}</td>
-                                                    <td className="py-3 px-4 text-right text-white">100,00%</td>
+                                                    <td className="py-3 px-4 text-right text-slate-900 dark:text-white">100,00%</td>
                                                 </tr>
                                             </tfoot>
                                         </table>
@@ -660,18 +692,18 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                     })()}
 
                     {/* Institutional & Legal Metadata */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-900/40 rounded-xl border border-slate-800 text-xs">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
                         <div>
-                            <span className="text-slate-500 block">ID Processo / Requerimento</span>
-                            <span className="font-mono text-slate-300 font-semibold mt-0.5 block">{offer.Id_Processo}</span>
+                            <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400 block">ID Processo / Requerimento</span>
+                            <span className="font-mono text-slate-600 dark:text-slate-300 font-semibold mt-0.5 block">{offer.Id_Processo}</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Data de Registro / Entrada</span>
-                            <span className="font-mono text-slate-300 mt-0.5 block">{formatDate(offer.Data_Clean)}</span>
+                            <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Data de Registro / Entrada</span>
+                            <span className="font-mono text-slate-600 dark:text-slate-300 mt-0.5 block">{formatDate(offer.Data_Clean)}</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Coordenador / Consórcio</span>
-                            <span className="text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>Líder: {offer.Lider}</span>
+                            <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Coordenador / Consórcio</span>
+                            <span className="text-slate-600 dark:text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>Líder: {offer.Lider}</span>
                             {(() => {
                                 const liderUpper = String(offer.Lider || "").toUpperCase().trim();
                                 const coordsRaw = Array.isArray(offer.Coordenadores_Todos) ? offer.Coordenadores_Todos : (offer.Coordenadores_Todos?.coordenadores || []);
@@ -686,10 +718,10 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                 
                                 return (
                                     <div className="mt-1 space-y-0.5">
-                                        <span className="block text-[10px] text-slate-500 font-mono uppercase mb-1">Demais Coordenadores:</span>
+                                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono uppercase mb-1">Demais Coordenadores:</span>
                                         <div className="overflow-x-auto pb-1.5 max-w-full whitespace-nowrap">
                                             {demaisCoords.map((c, i) => (
-                                                <span key={i} className="block text-[10px] text-slate-400 font-mono pr-2" title={c}>
+                                                <span key={i} className="block text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono pr-2" title={c}>
                                                     - {c}
                                                 </span>
                                             ))}
@@ -699,23 +731,23 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             })()}
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Processo SEI / Rito</span>
-                            <span className="text-slate-300 mt-0.5 block">{offer.Processo_SEI || "Não informado"} ({offer.Rito})</span>
+                            <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Processo SEI / Rito</span>
+                            <span className="text-slate-600 dark:text-slate-300 mt-0.5 block">{offer.Processo_SEI || "Não informado"} ({offer.Rito})</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Administrador / Gestor</span>
-                            <span className="text-slate-300 mt-0.5 block truncate" title={`${offer.Administrador} / ${offer.Gestor}`}>{offer.Administrador || "-"} / {offer.Gestor || "-"}</span>
+                            <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Administrador / Gestor</span>
+                            <span className="text-slate-600 dark:text-slate-300 mt-0.5 block truncate" title={`${offer.Administrador} / ${offer.Gestor}`}>{offer.Administrador || "-"} / {offer.Gestor || "-"}</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 block">Custodiante</span>
-                            <span className="text-slate-300 mt-0.5 block truncate" title={offer.Custodiante}>{offer.Custodiante || "-"}</span>
+                            <span className="text-slate-500 dark:text-slate-400 dark:text-slate-400 block">Custodiante</span>
+                            <span className="text-slate-600 dark:text-slate-300 mt-0.5 block truncate" title={offer.Custodiante}>{offer.Custodiante || "-"}</span>
                         </div>
                     </div>
                 </div>
 
                 {/* Drawer Footer */}
-                <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
-                    <span>Navegue com setas <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">&uarr;</kbd> <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">&darr;</kbd> ou feche com <kbd className="px-1.5 py-0.5 bg-slate-800 rounded font-mono">Esc</kbd></span>
+                <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">
+                    <span>Navegue com setas <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded font-mono">&uarr;</kbd> <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded font-mono">&darr;</kbd> ou feche com <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded font-mono">Esc</kbd></span>
                     <button 
                         onClick={onClose} 
                         className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-indigo-600/20">
@@ -733,6 +765,15 @@ const App = () => {
     const getInitialUrlParams = () => new URLSearchParams(window.location.search);
     
     const [status, setStatus] = useState({ status: "loading", rows_count: 0, last_update: "Conectando..." });
+    const [isDarkMode, setIsDarkMode] = useState(false);
+
+    useEffect(() => {
+        if (isDarkMode) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    }, [isDarkMode]);
     const [filters, setFilters] = useState({
         ano: getInitialUrlParams().get("ano") || "Todos",
         rito: getInitialUrlParams().get("rito") || "Todos",
@@ -741,6 +782,7 @@ const App = () => {
         indexador: getInitialUrlParams().get("indexador") || "Todos",
         publico: getInitialUrlParams().get("publico") || "Todos",
         volume_min: getInitialUrlParams().get("volume_min") || "Todos",
+        coordenador: getInitialUrlParams().get("coordenador") || "Todos",
         incluir_estimados: getInitialUrlParams().get("incluir_estimados") === "true" || false,
         data_de: getInitialUrlParams().get("data_de") || "2023-01",
         data_ate: getInitialUrlParams().get("data_ate") || ""
@@ -767,6 +809,7 @@ const App = () => {
   const datasetVersionRef = useRef(null);
   const [datasetLoaded, setDatasetLoaded] = useState(false);
     const [loadingMsg, setLoadingMsg] = useState("Inicializando servidor...");
+    const [coordenadoresList, setCoordenadoresList] = useState([]);
     const [sortBy, setSortBy] = useState(getInitialUrlParams().get("sort_by") || "Data_Clean");
     const [sortOrder, setSortOrder] = useState(getInitialUrlParams().get("sort_order") || "desc");
 
@@ -835,6 +878,17 @@ const App = () => {
                 });
                 datasetRef.current = objects;
                 datasetVersionRef.current = d.dataset_version;
+
+                const coordsSet = new Set();
+                objects.forEach(obj => {
+                  if (obj.lider) coordsSet.add(obj.lider.trim());
+                  if (Array.isArray(obj.coordenadores_todos)) {
+                    obj.coordenadores_todos.forEach(c => coordsSet.add(c.trim()));
+                  }
+                });
+                const sortedCoords = Array.from(coordsSet).filter(Boolean).sort();
+                setCoordenadoresList(sortedCoords);
+
                 setDatasetLoaded(true);
               }
             }
@@ -1005,7 +1059,7 @@ const App = () => {
         if (idx === "IPCA / Inflação") return "bg-amber-500/15 text-amber-400 border-amber-500/30";
         if (idx === "CDI / DI") return "bg-indigo-500/15 text-indigo-400 border-indigo-500/30";
         if (idx === "PRÉ (Prefixado)") return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-        return "bg-slate-800 text-slate-300 border-slate-700";
+        return "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700";
     };
 
     // Loading screen while backend is initializing data
@@ -1014,23 +1068,23 @@ const App = () => {
             <div className="min-h-screen flex flex-col items-center justify-center bg-[#080e1a]" style={{background: 'radial-gradient(ellipse at 60% 20%, #0d1f3c 0%, #080e1a 70%)'}}>
                 <div className="flex flex-col items-center gap-8 max-w-md text-center px-6">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center shadow-2xl shadow-indigo-500/40 animate-pulse">
-                        <Icons.TrendingUp className="w-10 h-10 text-white" />
+                        <Icons.TrendingUp className="w-10 h-10 text-slate-900 dark:text-white" />
                     </div>
                     <div>
-                        <h1 className="text-3xl font-extrabold text-white font-display tracking-tight mb-2">CVM Primários Monitor PRO</h1>
-                        <p className="text-slate-400 text-sm">Plataforma de Auditoria de Emissões Primárias</p>
+                        <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white font-display tracking-tight mb-2">CVM Primários Monitor PRO</h1>
+                        <p className="text-slate-500 dark:text-slate-400 dark:text-slate-400 text-sm">Plataforma de Auditoria de Emissões Primárias</p>
                     </div>
-                    <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                         <div className="h-full bg-gradient-to-r from-indigo-500 via-blue-400 to-indigo-500 rounded-full animate-pulse" style={{width:'60%'}}></div>
                     </div>
-                    <div className="flex items-center gap-3 text-slate-300 text-sm">
+                    <div className="flex items-center gap-3 text-slate-600 dark:text-slate-300 text-sm">
                         <svg className="animate-spin w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
                         </svg>
-                        <span className="font-mono text-xs text-slate-300">{loadingMsg}</span>
+                        <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{loadingMsg}</span>
                     </div>
-                    <p className="text-xs text-slate-500">Fazendo download da base de dados oficial CVM e processando ofertas primárias. Isso pode levar até 60 segundos na primeira inicialização.</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">Fazendo download da base de dados oficial CVM e processando ofertas primárias. Isso pode levar até 60 segundos na primeira inicialização.</p>
                 </div>
             </div>
         );
@@ -1047,25 +1101,15 @@ const App = () => {
                         </div>
                         <div>
                             <div className="flex items-center space-x-2">
-                                <h1 className="text-xl font-extrabold text-white font-display tracking-tight">CVM Primários Monitor PRO</h1>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                    Emissões
-                                </span>
+                                <h1 className="text-xl font-extrabold text-slate-900 dark:text-white font-display tracking-tight">Dashboard Emissões</h1>
                             </div>
-                            <p className="text-xs text-slate-400 flex items-center space-x-2 mt-0.5">
-                                <span>Auditoria Oficial CVM</span>
-                                <span>•</span>
-                                <span className="font-mono text-indigo-300">{formatNumber(status.rows_count)} Ofertas no Banco</span>
-                                <span>•</span>
-                                <span className="text-slate-500">{status.last_update}</span>
-                            </p>
                         </div>
                     </div>
 
                     {/* Unified Debounced Search Bar Header */}
-                    <div className="flex items-center space-x-3 flex-1 max-w-md">
+                    <div className="flex items-center space-x-3 flex-1 max-w-2xl">
                         <div className="relative w-full">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 dark:text-slate-400 dark:text-slate-400">
                                 <Icons.Search />
                             </div>
                             <input
@@ -1073,12 +1117,12 @@ const App = () => {
                                 placeholder="Busque por Emissor, Coordenador, Ativo ou Processo..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full pl-9 pr-8 py-2 bg-slate-900/90 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner"
+                                className="w-full pl-9 pr-8 py-2 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner"
                             />
                             {searchQuery && (
                                 <button
                                     onClick={() => setSearchQuery("")}
-                                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white">
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 dark:text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
                                     <Icons.X />
                                 </button>
                             )}
@@ -1086,38 +1130,47 @@ const App = () => {
                     </div>
 
                     {/* Navigation Tabs */}
-                    <nav className="flex items-center space-x-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+                    <nav className="flex items-center space-x-1 bg-white/80 dark:bg-slate-900/80 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
                         <button
                             onClick={() => setActiveTab("explorer")}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-2 ${activeTab === "explorer" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30" : "text-slate-400 hover:text-white"}`}>
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-2 ${activeTab === "explorer" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30" : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"}`}>
                             <Icons.FileText />
                             <span>Mesa & Dossiê</span>
                         </button>
                         <button
                             onClick={() => setActiveTab("charts")}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-2 ${activeTab === "charts" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30" : "text-slate-400 hover:text-white"}`}>
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-2 ${activeTab === "charts" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30" : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"}`}>
                             <Icons.BarChart2 />
                             <span>Inteligência & Temporal</span>
                         </button>
                         <button
                             onClick={() => setActiveTab("investors")}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-2 ${activeTab === "investors" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30" : "text-slate-400 hover:text-white"}`}>
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-2 ${activeTab === "investors" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30" : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"}`}>
                             <Icons.PieChart />
                             <span>Demografia Varejo</span>
                         </button>
                     </nav>
+                    
+                    {/* Theme Toggle Button */}
+                    <button
+                        onClick={() => setIsDarkMode(!isDarkMode)}
+                        className="ml-2 p-2 rounded-xl bg-white/80 dark:bg-slate-900/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700/80 text-slate-500 dark:text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all shadow-lg hidden md:flex items-center justify-center"
+                        title="Alternar Tema"
+                    >
+                        {isDarkMode ? <Icons.Sun /> : <Icons.Moon />}
+                    </button>
                 </div>
             </header>
 
             {/* Sticky Quick-Access Multi-Selection Chips Row with Date Range Slider */}
             {/* Sticky Quick-Access Multi-Selection Chips Row with Date Range Slider */}
-            <div className="sticky top-[73px] z-30 glass-header px-4 lg:px-6 py-2 border-b border-slate-800/80 shadow-md">
+            <div className="sticky top-[73px] z-30 glass-header px-4 lg:px-6 py-2 border-b border-slate-200 dark:border-slate-800/80 shadow-md">
                 <div className="max-w-7xl mx-auto flex flex-col 2xl:flex-row items-stretch 2xl:items-center justify-between gap-2.5 text-xs">
                     {/* Top Tier (or Left on 2xl): Ativo Chips & Indexador Chips */}
                     <div className="flex flex-wrap items-center justify-between gap-3 w-full 2xl:w-auto">
                         {/* Instrumentos (Ativos) Multi-Select Chips */}
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                            <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold mr-1 flex items-center">
+                            <span className="text-[11px] font-mono uppercase text-slate-500 dark:text-slate-400 dark:text-slate-400 font-semibold mr-1 flex items-center">
                                 <Icons.Filter /> <span className="ml-1">Ativo:</span>
                             </span>
                             {[
@@ -1138,7 +1191,7 @@ const App = () => {
                                         className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
                                             isSelected
                                                 ? "bg-indigo-600/25 text-indigo-300 border-indigo-500 shadow-sm"
-                                                : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
+                                                : "bg-white/80 dark:bg-slate-900/80 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:text-slate-700 dark:hover:text-slate-200 hover:border-slate-200 dark:hover:border-slate-700"
                                         }`}>
                                         <span>{item.label}</span>
                                         {isSelected && !isAll && <span className="text-indigo-400 font-bold ml-1">•</span>}
@@ -1149,7 +1202,7 @@ const App = () => {
 
                         {/* Indexadores */}
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                            <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold mr-1">
+                            <span className="text-[11px] font-mono uppercase text-slate-500 dark:text-slate-400 dark:text-slate-400 font-semibold mr-1">
                                 Indexador:
                             </span>
                             {["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)"].map(item => {
@@ -1164,7 +1217,7 @@ const App = () => {
                                         className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-medium transition-all flex items-center space-x-1 border ${
                                             isSelected
                                                 ? getIndexerColorClass(item) + " font-semibold shadow-sm"
-                                                : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
+                                                : "bg-white/80 dark:bg-slate-900/80 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:text-slate-700 dark:hover:text-slate-200 hover:border-slate-200 dark:hover:border-slate-700"
                                         }`}>
                                         <span>{label}</span>
                                         {isSelected && !isAll && <span className="font-bold ml-1">•</span>}
@@ -1177,15 +1230,15 @@ const App = () => {
                     {/* Bottom Tier (or Center on 2xl): Date Range Slider */}
                     <div className="w-full 2xl:w-auto 2xl:flex-1 2xl:max-w-lg 2xl:mx-3 min-w-0">
                         <DateRangeSlider 
-                            minDateStr={status.data_min && status.data_min >= "2023-01" ? status.data_min : "2023-01"} 
-                            maxDateStr={status.data_max || "2026-07"} 
+                            minDateStr={status.options?.data_min && status.options?.data_min >= "2023-01" ? status.options?.data_min : "2023-01"} 
+                            maxDateStr={status.options?.data_max || "2026-07"} 
                             currentDe={filters.data_de} 
                             currentAte={filters.data_ate} 
                             onChange={(de, ate) => {
                                 setFilters(prev => ({ ...prev, data_de: de, data_ate: ate, ano: (de || ate) ? "Todos" : prev.ano }));
                                 setCurrentPage(1);
                             }} 
-                            className="flex items-center justify-between gap-2.5 bg-slate-900/95 border border-slate-700/80 px-3 py-1 rounded-lg shadow-inner w-full overflow-hidden"
+                            className="flex items-center justify-between gap-2.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700/80 px-3 py-1 rounded-lg shadow-inner w-full overflow-hidden"
                         />
                     </div>
                 </div>
@@ -1200,9 +1253,9 @@ const App = () => {
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-amber-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
-                                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Share de Volume por Indexador</span>
+                                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider">Share de Volume por Indexador</span>
                                     <div className="flex items-baseline space-x-2 mt-2">
-                                        <span className="text-2xl font-bold text-white font-display">{kpis.share_cdi}%</span>
+                                        <span className="text-2xl font-bold text-slate-900 dark:text-white font-display">{kpis.share_cdi}%</span>
                                         <span className="text-xs font-mono text-indigo-400">CDI/DI</span>
                                     </div>
                                 </div>
@@ -1210,7 +1263,7 @@ const App = () => {
                                     <Icons.Award />
                                 </span>
                             </div>
-                            <div className="flex items-center justify-between text-xs font-mono text-slate-400 pt-3 border-t border-slate-800/80 mt-3">
+                            <div className="flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-800/80 mt-3">
                                 <span>IPCA: <strong className="text-amber-400">{kpis.share_ipca}%</strong></span>
                                 <span>PRÉ: <strong className="text-emerald-400">{kpis.share_pre}%</strong></span>
                             </div>
@@ -1220,14 +1273,14 @@ const App = () => {
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-indigo-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
-                                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pipeline Bookbuilding (A Definir)</span>
-                                    <h3 className="text-2xl font-bold text-white font-display mt-2">{formatCurrency(kpis.vol_bookbuilding)}</h3>
+                                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider">Pipeline Bookbuilding (A Definir)</span>
+                                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white font-display mt-2">{formatCurrency(kpis.vol_bookbuilding)}</h3>
                                 </div>
                                 <span className="p-2.5 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/20">
                                     <Icons.TrendingUp />
                                 </span>
                             </div>
-                            <div className="flex items-center justify-between text-xs font-mono text-slate-400 pt-3 border-t border-slate-800/80 mt-3">
+                            <div className="flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-800/80 mt-3">
                                 <span>Ofertas em Alvo/Spread:</span>
                                 <strong className="text-indigo-400">{formatNumber(kpis.qtd_bookbuilding)} deals</strong>
                             </div>
@@ -1237,14 +1290,14 @@ const App = () => {
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-emerald-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
-                                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Ticket Médio / Alocação Varejo</span>
-                                    <h3 className="text-2xl font-bold text-white font-display mt-2">{formatCurrency(kpis.ticket_medio)}</h3>
+                                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider">Ticket Médio / Alocação Varejo</span>
+                                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white font-display mt-2">{formatCurrency(kpis.ticket_medio)}</h3>
                                 </div>
                                 <span className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
                                     <Icons.Shield />
                                 </span>
                             </div>
-                            <div className="flex items-center justify-between text-xs font-mono text-slate-400 pt-3 border-t border-slate-800/80 mt-3">
+                            <div className="flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-800/80 mt-3">
                                 <span>Share Real PF (Confirmado):</span>
                                 <strong className="text-emerald-400">{kpis.taxa_varejo}%</strong>
                             </div>
@@ -1254,14 +1307,14 @@ const App = () => {
                         <div className="glass-card rounded-2xl p-5 border-l-4 border-l-blue-500 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <div>
-                                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Volume Confirmado & Rito Auto</span>
-                                    <h3 className="text-2xl font-bold text-white font-display mt-2">{formatCurrency(kpis.vol_confirmado)}</h3>
+                                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider">Volume Confirmado & Rito Auto</span>
+                                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white font-display mt-2">{formatCurrency(kpis.vol_confirmado)}</h3>
                                 </div>
                                 <span className="p-2.5 bg-blue-500/10 rounded-xl text-blue-400 border border-blue-500/20">
                                     <Icons.BarChart2 />
                                 </span>
                             </div>
-                            <div className="flex items-center justify-between text-xs font-mono text-slate-400 pt-3 border-t border-slate-800/80 mt-3">
+                            <div className="flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-800/80 mt-3">
                                 <span>Ofertas Rito Automático:</span>
                                 <strong className="text-blue-400">{kpis.taxa_auto}%</strong>
                             </div>
@@ -1271,15 +1324,15 @@ const App = () => {
 
                 {/* Filter Bar Component */}
                 <div className="glass-card rounded-2xl p-5 space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                        <div className="flex items-center space-x-2 text-sm font-semibold text-white">
+                    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+                        <div className="flex items-center space-x-2 text-sm font-semibold text-slate-900 dark:text-white">
                             <Icons.Filter />
                             <span>Filtros Operacionais & Sincronização URL</span>
                         </div>
                         <div className="flex items-center space-x-3">
                             <button
                                 onClick={handleClearFilters}
-                                className="text-xs text-slate-400 hover:text-white transition-colors flex items-center space-x-1 py-1 px-2.5 rounded bg-slate-800/80 hover:bg-slate-700">
+                                className="text-xs text-slate-700 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center space-x-1 py-1 px-2.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700">
                                 <Icons.RefreshCw />
                                 <span>Limpar Filtros</span>
                             </button>
@@ -1292,13 +1345,13 @@ const App = () => {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                         <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Status na CVM</label>
+                            <label className="text-[11px] font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase block mb-1">Status na CVM</label>
                             <select
                                 value={filters.status}
                                 onChange={(e) => handleFilterChange("status", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500">
                                 <option value="Todos">Todos os Status</option>
                                 <option value="Em Andamento (Bookbuilding)">Em Andamento / Bookbuilding</option>
                                 <option value="Registrada">Registrada / Encerrada</option>
@@ -1307,11 +1360,11 @@ const App = () => {
                         </div>
 
                         <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Público-Alvo</label>
+                            <label className="text-[11px] font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase block mb-1">Público-Alvo</label>
                             <select
                                 value={filters.publico}
                                 onChange={(e) => handleFilterChange("publico", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500">
                                 <option value="Todos">Todos os Públicos</option>
                                 <option value="Investidores Profissionais">Investidores Profissionais</option>
                                 <option value="Investidores Qualificados">Investidores Qualificados</option>
@@ -1320,11 +1373,11 @@ const App = () => {
                         </div>
 
                         <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Volume</label>
+                            <label className="text-[11px] font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase block mb-1">Volume</label>
                             <select
                                 value={filters.volume_min}
                                 onChange={(e) => handleFilterChange("volume_min", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500">
                                 <option value="Todos">Todos os Volumes</option>
                                 <option value=">100MM">&gt; 100MM</option>
                                 <option value=">500MM">&gt; 500MM</option>
@@ -1333,17 +1386,30 @@ const App = () => {
                         </div>
 
                         <div>
-                            <label className="text-[11px] font-mono text-slate-400 uppercase block mb-1">Volumes Alvo Estimados</label>
+                            <label className="text-[11px] font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase block mb-1">Coordenador</label>
+                            <select
+                                value={filters.coordenador}
+                                onChange={(e) => handleFilterChange("coordenador", e.target.value)}
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 px-2.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500">
+                                <option value="Todos">Todos os Coordenadores</option>
+                                {coordenadoresList.map(coord => (
+                                    <option key={coord} value={coord}>{coord}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="text-[11px] font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase block mb-1">Volumes Alvo Estimados</label>
                             <button
                                 onClick={() => handleFilterChange("incluir_estimados", !filters.incluir_estimados)}
                                 title="Quando ativado, inclui volumes alvo de bookbuilding ainda em formação nos KPIs e rankings."
                                 className={`w-full py-1.5 px-3 rounded-lg font-mono text-xs font-medium transition-all flex items-center justify-between border ${
                                     filters.incluir_estimados
                                         ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
-                                        : "bg-slate-900 text-slate-400 border-slate-700 hover:text-slate-200"
+                                        : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-slate-700 dark:hover:text-slate-200"
                                 }`}>
                                 <span>Bookbuilding Estimado:</span>
-                                <strong className={filters.incluir_estimados ? "text-purple-300 font-bold" : "text-slate-500"}>
+                                <strong className={filters.incluir_estimados ? "text-purple-300 font-bold" : "text-slate-500 dark:text-slate-400"}>
                                     {filters.incluir_estimados ? "INCLUÍDO" : "EXCLUÍDO"}
                                 </strong>
                             </button>
@@ -1354,20 +1420,20 @@ const App = () => {
                 {/* Tab 1: Explorer & Table with Slide-over Drawer */}
                 {activeTab === "explorer" && (
                     <div className="glass-card rounded-2xl overflow-hidden shadow-xl">
-                        <div className="p-4 bg-slate-900/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
                             <div className="flex items-center space-x-3">
-                                <h2 className="text-base font-bold text-white font-display">Tabela de Ofertas Primárias e Remuneração</h2>
-                                <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2.5 py-0.5 rounded-full border border-slate-700" title={filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "Total aproximado para indexador filtrado em tempo real" : ""}>
+                                <h2 className="text-base font-bold text-slate-900 dark:text-white font-display">Tabela de Ofertas Primárias e Remuneração</h2>
+                                <span className="text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700" title={filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "Total aproximado para indexador filtrado em tempo real" : ""}>
                                     Página {offersData.page} de {offersData.total_pages} ({formatNumber(offersData.total)} ofertas{filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "*" : ""})
                                 </span>
                             </div>
 
                             <div className="flex items-center space-x-3">
-                                <span className="text-xs text-slate-400 font-mono">Por página:</span>
+                                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono">Por página:</span>
                                 <select
                                     value={pageSize}
                                     onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
-                                    className="bg-slate-900 border border-slate-700 rounded py-1 px-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500">
+                                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded py-1 px-2 text-xs text-slate-700 dark:text-slate-200 font-mono focus:outline-none focus:border-indigo-500">
                                     <option value={15}>15</option>
                                     <option value={25}>25</option>
                                     <option value={50}>50</option>
@@ -1382,42 +1448,42 @@ const App = () => {
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left border-collapse data-grid text-xs">
                                     <thead>
-                                        <tr className="border-b border-slate-800 text-slate-400 font-mono uppercase text-[11px] select-none">
-                                            <th className="p-3.5 cursor-pointer hover:text-white" onClick={() => handleSort("Data_Clean")}>
+                                        <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono uppercase text-[11px] select-none">
+                                            <th className="p-3.5 cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Clean")}>
                                                 Data {sortBy === "Data_Clean" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
-                                            <th className="p-3.5 cursor-pointer hover:text-white" onClick={() => handleSort("Emissor")}>
+                                            <th className="p-3.5 cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Emissor")}>
                                                 Emissor / Ofertante {sortBy === "Emissor" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="p-3.5">Ativo / Tipo</th>
                                             <th className="p-3.5">Indexador</th>
                                             <th className="p-3.5">Remuneração (Spread/Juros)</th>
-                                            <th className="p-3.5 cursor-pointer hover:text-white" onClick={() => handleSort("Status")}>
+                                            <th className="p-3.5 cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Status")}>
                                                 Status CVM {sortBy === "Status" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
-                                            <th className="p-3.5 text-right cursor-pointer hover:text-white" onClick={() => handleSort("Volume_Float")}>
+                                            <th className="p-3.5 text-right cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Volume_Float")}>
                                                 Volume Registrado {sortBy === "Volume_Float" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="p-3.5 text-center">Vencimento (MM/AA)</th>
                                             <th className="p-3.5 text-center">Auditoria</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-800/50 text-slate-300">
+                                    <tbody className="divide-y divide-slate-800/50 text-slate-600 dark:text-slate-300">
                                         {offersData.items.map((r, i) => {
                                             const isSelected = selectedOffer && selectedOffer.Id_Processo === r.Id_Processo;
                                             return (
                                                 <tr 
                                                     key={r.Id_Processo + i} 
                                                     onClick={() => setSelectedOffer(r)}
-                                                    className={`cursor-pointer transition-colors ${isSelected ? "bg-indigo-600/15 border-l-4 border-l-indigo-500" : "hover:bg-slate-800/40"}`}>
-                                                    <td className="p-3.5 font-mono text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
-                                                    <td className="p-3.5 font-semibold text-white max-w-[240px] truncate" title={r.Emissor}>
+                                                    className={`cursor-pointer transition-colors ${isSelected ? "bg-indigo-600/15 border-l-4 border-l-indigo-500" : "hover:bg-slate-100 dark:hover:bg-slate-800/40"}`}>
+                                                    <td className="p-3.5 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
+                                                    <td className="p-3.5 font-semibold text-slate-900 dark:text-white max-w-[240px] truncate" title={r.Emissor}>
                                                         {r.Emissor}
-                                                        <span className="block text-[10px] text-slate-500 font-mono mt-0.5 truncate" title={r.Consorcio || r.Lider}>Líder: {r.Lider}</span>
+                                                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono mt-0.5 truncate" title={r.Consorcio || r.Lider}>Líder: {r.Lider}</span>
                                                     </td>
                                                     <td className="p-3.5">
                                                         <div className="flex flex-col gap-1.5 items-start">
-                                                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80 font-mono text-[11px]">
+                                                            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/80 font-mono text-[11px]">
                                                                 {r.Ativo}
                                                             </span>
                                                             {r.Series && r.Series.length > 1 && (
@@ -1434,12 +1500,12 @@ const App = () => {
                                                             {r.Indexador}
                                                         </span>
                                                     </td>
-                                                    <td className="p-3.5 max-w-[200px]">
+                                                    <td className="p-3.5 max-w-[260px] whitespace-normal break-words">
                                                         {(r.Taxa_Declarada || r.Taxa_Juros?.includes("*(Hist. Emissor)*") || (r.Taxa_Juros && !r.Taxa_Juros.includes("a Definir") && !r.Taxa_Juros.includes("Não Informado"))) ? (
-                                                            <span className="text-emerald-400 font-semibold truncate block" title={r.Taxa_Juros}>{r.Taxa_Juros}</span>
+                                                            <span className="text-emerald-400 font-semibold" title={r.Taxa_Juros}>{formatTaxa(r.Taxa_Juros)}</span>
                                                         ) : (
-                                                            <span className="text-amber-400 text-[11px] font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 block truncate inline-flex items-center" title={r.Taxa_Juros || "Spread a Definir (Bookbuilding)"}>
-                                                                <Icons.Clock className="w-3 h-3 inline mr-1 shrink-0" /> {r.Taxa_Juros?.replace(" (Bookbuilding)", "") || "Alvo (Bookbuilding)"}
+                                                            <span className="text-amber-400 text-[11px] font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 inline-flex items-center" title={r.Taxa_Juros || "Spread a Definir (Bookbuilding)"}>
+                                                                <Icons.Clock className="w-3 h-3 inline mr-1 shrink-0" /> {formatTaxa(r.Taxa_Juros?.replace(" (Bookbuilding)", "")) || "Alvo (Bookbuilding)"}
                                                             </span>
                                                         )}
                                                     </td>
@@ -1449,7 +1515,7 @@ const App = () => {
                                                                 ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
                                                                 : r.Status?.includes("Análise") || r.Status?.includes("Exigência") || r.Status?.includes("Pendente")
                                                                 ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
-                                                                : "bg-slate-800 text-slate-300 border-slate-700"
+                                                                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
                                                         }`} title={r.Status}>
                                                             {r.Status || "-"}
                                                         </span>
@@ -1462,7 +1528,7 @@ const App = () => {
                                                             </span>
                                                         )}
                                                     </td>
-                                                    <td className="p-3.5 whitespace-nowrap text-center font-mono text-slate-300">
+                                                    <td className="p-3.5 whitespace-nowrap text-center font-mono text-slate-600 dark:text-slate-300">
                                                         {r.Vencimento && r.Vencimento !== "N/I" ? (
                                                             <span className="px-2.5 py-1 rounded-md bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-semibold text-[11px] block">{r.Vencimento}</span>
                                                         ) : (
@@ -1472,7 +1538,7 @@ const App = () => {
                                                     <td className="p-3.5 text-center">
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); setSelectedOffer(r); }}
-                                                            className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded border border-indigo-500/30 transition-all text-xs font-mono">
+                                                            className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-slate-900 dark:hover:text-white rounded border border-indigo-500/30 transition-all text-xs font-mono">
                                                             Dossiê &rarr;
                                                         </button>
                                                     </td>
@@ -1481,10 +1547,10 @@ const App = () => {
                                         })}
                                         {!offersData.items.length && (
                                             <tr>
-                                                <td colSpan={10} className="p-12 text-center text-slate-400">
+                                                <td colSpan={10} className="p-12 text-center text-slate-500 dark:text-slate-400 dark:text-slate-400">
                                                     <div className="max-w-md mx-auto">
-                                                        <p className="text-base font-semibold text-slate-300 mb-1">Nenhuma oferta carregada ou conexão pendente na porta 8000</p>
-                                                        <p className="text-xs text-slate-500">Certifique-se de que o backend Python (`python main.py` no terminal do backend) está ativo na porta 8000.</p>
+                                                        <p className="text-base font-semibold text-slate-600 dark:text-slate-300 mb-1">Nenhuma oferta carregada ou conexão pendente na porta 8000</p>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">Certifique-se de que o backend Python (`python main.py` no terminal do backend) está ativo na porta 8000.</p>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1495,9 +1561,9 @@ const App = () => {
                         )}
 
                         {/* Pagination Footer */}
-                        <div className="p-4 bg-slate-900/60 border-t border-slate-800 flex items-center justify-between">
+                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
                             <div className="flex flex-col">
-                                <span className="text-xs font-mono text-slate-400">
+                                <span className="text-xs font-mono text-slate-500 dark:text-slate-400 dark:text-slate-400">
                                     Exibindo {(offersData.page - 1) * pageSize + 1} a {Math.min(offersData.page * pageSize, offersData.total)} de {formatNumber(offersData.total)}{filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" ? "*" : ""}
                                 </span>
                                 {filters.indexador !== "Todos" && filters.indexador !== "Todos os Indexadores" && (
@@ -1508,16 +1574,16 @@ const App = () => {
                                 <button
                                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                     disabled={currentPage <= 1 || loading}
-                                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded text-xs font-mono border border-slate-700">
+                                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-600 dark:text-slate-300 rounded text-xs font-mono border border-slate-200 dark:border-slate-700">
                                     &larr; Anterior
                                 </button>
-                                <span className="px-3 py-1 bg-slate-950 rounded text-xs font-mono text-indigo-400 border border-slate-800">
+                                <span className="px-3 py-1 bg-slate-50 dark:bg-slate-950 rounded text-xs font-mono text-indigo-400 border border-slate-200 dark:border-slate-800">
                                     {currentPage} / {offersData.total_pages}
                                 </span>
                                 <button
                                     onClick={() => setCurrentPage(p => Math.min(offersData.total_pages, p + 1))}
                                     disabled={currentPage >= offersData.total_pages || loading}
-                                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded text-xs font-mono border border-slate-700">
+                                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-600 dark:text-slate-300 rounded text-xs font-mono border border-slate-200 dark:border-slate-700">
                                     Próxima &rarr;
                                 </button>
                             </div>
@@ -1528,23 +1594,23 @@ const App = () => {
                 {/* Tab 2: Charts & Monthly Stacked Bars */}
                 {activeTab === "charts" && (
                     !overviewCharts ? (
-                        <div className="p-16 text-center text-slate-400 bg-slate-900/40 rounded-2xl border border-slate-800">
+                        <div className="p-16 text-center text-slate-500 dark:text-slate-400 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800">
                             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500 mx-auto mb-4"></div>
-                            <p className="font-semibold text-slate-300">Carregando Gráficos (Inteligência & Temporal)...</p>
-                            <p className="text-xs text-slate-500 mt-1">Verificando API CVM na porta 8000...</p>
+                            <p className="font-semibold text-slate-600 dark:text-slate-300">Carregando Gráficos (Inteligência & Temporal)...</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 mt-1">Verificando API CVM na porta 8000...</p>
                         </div>
                     ) : (
                         <div className="space-y-6">
                             {/* 1. Vencimento X Spread — Scatter/Bubble */}
                         {overviewCharts.vencimento_spread && (overviewCharts.vencimento_spread.cdi_points?.length > 0 || overviewCharts.vencimento_spread.ipca_points?.length > 0) && (
-                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 bg-gradient-to-br from-slate-900/90 to-slate-900/40">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80 bg-gradient-to-br from-slate-900/90 to-slate-900/40">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
                                     <div>
-                                        <h3 className="text-base font-bold text-white font-display flex items-center gap-2">
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                             <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
                                             Vencimento &times; Spread (% a.a.)
                                         </h3>
-                                        <p className="text-xs text-slate-400">Dispersão real: cada bolha é uma emissão, tamanho proporcional ao volume. Clique em um ponto para abrir o dossiê.</p>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">Dispersão real: cada bolha é uma emissão, tamanho proporcional ao volume. Clique em um ponto para abrir o dossiê.</p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">
                                         <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500 border border-indigo-300 inline-block"></span><span>CDI+ (% a.a.)</span></span>
@@ -1648,14 +1714,14 @@ const App = () => {
                                         scales: {
                                             x: {
                                                 type: "linear",
-                                                title: { display: true, text: "Ano de Vencimento", color: "#94A3B8", font: { family: "JetBrains Mono", size: 11 } },
-                                                grid: { color: "#1E293B" },
-                                                ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, stepSize: 1, callback: v => String(v) }
+                                                title: { display: true, text: "Ano de Vencimento", color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono", size: 11 } },
+                                                grid: { color: isDarkMode ? "#1E293B" : "#475569" },
+                                                ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, stepSize: 1, callback: v => String(v) }
                                             },
                                             y: {
-                                                title: { display: true, text: "Spread (% a.a.)", color: "#94A3B8", font: { family: "JetBrains Mono", size: 11 } },
-                                                grid: { color: "#1E293B" },
-                                                ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `${v}%` }
+                                                title: { display: true, text: "Spread (% a.a.)", color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono", size: 11 } },
+                                                grid: { color: isDarkMode ? "#1E293B" : "#475569" },
+                                                ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `${v}%` }
                                             }
                                         },
                                         plugins: {
@@ -1684,14 +1750,14 @@ const App = () => {
 
                         {/* 2. Volume Emitido Indexado por Referência NTN-B — Barras Horizontais Empilhadas */}
                         {overviewCharts.ntnb_volume && overviewCharts.ntnb_volume.labels?.length > 0 && (
-                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
                                     <div>
-                                        <h3 className="text-base font-bold text-white font-display flex items-center gap-2">
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
                                             <span className="w-2 h-2 rounded-full bg-amber-400"></span>
                                             Volume Emitido Indexado por Referência NTN-B (R$ Bi)
                                         </h3>
-                                        <p className="text-xs text-slate-400">
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">
                                             Distribuição por vértice NTN-B &mdash;{" "}
                                             <span className="text-amber-400 font-semibold">{overviewCharts.ntnb_volume.cobertura || 0}% do volume IPCA classificado</span>
                                         </p>
@@ -1726,8 +1792,8 @@ const App = () => {
                                     options={{
                                         indexAxis: "y",
                                         scales: {
-                                            x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } },
-                                            y: { stacked: true, grid: { display: false }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono", size: 11 } } }
+                                            x: { stacked: true, grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } },
+                                            y: { stacked: true, grid: { display: false }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono", size: 11 } } }
                                         },
                                         plugins: {
                                             legend: { display: false },
@@ -1752,11 +1818,11 @@ const App = () => {
 
                         {/* 3A. Evolução Mensal Consolidada do Volume (Gráfico de Linha Mês a Mês) */}
                         {overviewCharts.monthly_volume && (
-                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
                                     <div>
-                                        <h3 className="text-base font-bold text-white font-display">Histórico de volume consolidado mês a mês (R$ Bi)</h3>
-                                        <p className="text-xs text-slate-400">Evolução temporal em linha do volume total registrado na CVM mês a mês</p>
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">Histórico de volume consolidado mês a mês (R$ Bi)</h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">Evolução temporal em linha do volume total registrado na CVM mês a mês</p>
                                     </div>
                                 </div>
                                 <ChartWrapper
@@ -1779,8 +1845,8 @@ const App = () => {
                                     }}
                                     options={{
                                         scales: {
-                                            x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                            y: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
+                                            x: { grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" } } },
+                                            y: { grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
                                         },
                                         plugins: {
                                             legend: { display: false },
@@ -1793,11 +1859,11 @@ const App = () => {
 
                         {/* 3B. Evolução Mensal do Volume por Indexador */}
                         {overviewCharts.monthly_indexer && (
-                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
                                     <div>
-                                        <h3 className="text-base font-bold text-white font-display">Histórico de volume mês a mês por indexador (R$ Bi)</h3>
-                                        <p className="text-xs text-slate-400">Barras empilhadas exibindo a migração temporal entre CDI/DI, IPCA e PRÉ Prefixado</p>
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">Histórico de volume mês a mês por indexador (R$ Bi)</h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">Barras empilhadas exibindo a migração temporal entre CDI/DI, IPCA e PRÉ Prefixado</p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">
                                         <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
@@ -1818,8 +1884,8 @@ const App = () => {
                                     }}
                                     options={{
                                         scales: {
-                                            x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                            y: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
+                                            x: { stacked: true, grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" } } },
+                                            y: { stacked: true, grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
                                         },
                                         plugins: {
                                             legend: { display: false },
@@ -1832,11 +1898,11 @@ const App = () => {
 
                         {/* 3C. Evolução Anual do Volume por Indexador */}
                         {overviewCharts.yearly_indexer && (
-                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
                                     <div>
-                                        <h3 className="text-base font-bold text-white font-display">Histórico de volume ano a ano por indexador (R$ Bi)</h3>
-                                        <p className="text-xs text-slate-400">Barras empilhadas exibindo a divisão anual entre CDI/DI, IPCA e PRÉ Prefixado</p>
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">Histórico de volume ano a ano por indexador (R$ Bi)</h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">Barras empilhadas exibindo a divisão anual entre CDI/DI, IPCA e PRÉ Prefixado</p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">
                                         <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
@@ -1857,8 +1923,8 @@ const App = () => {
                                     }}
                                     options={{
                                         scales: {
-                                            x: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                            y: { stacked: true, grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
+                                            x: { stacked: true, grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" } } },
+                                            y: { stacked: true, grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `R$ ${v} Bi` } }
                                         },
                                         plugins: {
                                             legend: { display: false },
@@ -1872,24 +1938,24 @@ const App = () => {
                         {/* 4. Coordenadores e Emissores com Toggle Top 10 vs Ver Todos */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {overviewCharts.top_coordenadores && (
-                                <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2 flex-wrap">
-                                        <h3 className="text-base font-bold text-white font-display">Coordenadores por Volume Registrado (R$ Bi)</h3>
+                                <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80 flex flex-col">
+                                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2 flex-wrap">
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">Coordenadores por Volume Registrado (R$ Bi)</h3>
                                         <div className="flex items-center gap-2">
                                             <button
                                                 onClick={() => setModoCoordenador(modoCoordenador === "lider" ? "todos" : "lider")}
                                                 title="Alternar entre apenas Coordenador Líder ou todos os Coordenadores do Consórcio"
                                                 className={`px-2.5 py-1 text-xs font-mono rounded-lg transition-all border ${
                                                     modoCoordenador === "todos"
-                                                        ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-600 hover:text-white"
-                                                        : "bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white"
+                                                        ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-600 hover:text-slate-900 dark:hover:text-white"
+                                                        : "bg-slate-800/80 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white"
                                                 }`}
                                             >
                                                 {modoCoordenador === "todos" ? "Consórcio (Todos)" : "Apenas Líder"}
                                             </button>
                                             <button 
                                                 onClick={() => setShowAllLeaders(!showAllLeaders)}
-                                                className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
+                                                className="px-2.5 py-1 text-xs font-mono rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-slate-900 dark:hover:text-white transition-all border border-indigo-500/30 whitespace-nowrap">
                                                 {showAllLeaders ? "Ver Top 10" : "Ver Todos"}
                                             </button>
                                         </div>
@@ -1910,8 +1976,8 @@ const App = () => {
                                             options={{
                                                 indexAxis: "y",
                                                 scales: {
-                                                    x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
-                                                    y: { grid: { display: false }, ticks: { color: "#E2E8F0", font: { family: "Inter", size: 10 } } }
+                                                    x: { grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" } } },
+                                                    y: { grid: { display: false }, ticks: { color: isDarkMode ? "#E2E8F0" : "#475569", font: { family: "Inter", size: 10 } } }
                                                 },
                                                 plugins: { legend: { display: false } }
                                             }}
@@ -1921,12 +1987,12 @@ const App = () => {
                             )}
 
                             {overviewCharts.top_emissores && (
-                                <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-800/80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2">
-                                        <h3 className="text-base font-bold text-white font-display">Maiores Emissores por Volume Registrado (R$ Bi)</h3>
+                                <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80 flex flex-col">
+                                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">Maiores Emissores por Volume Registrado (R$ Bi)</h3>
                                         <button 
                                             onClick={() => setShowAllIssuers(!showAllIssuers)}
-                                            className="px-2.5 py-1 text-xs font-mono rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white transition-all border border-emerald-500/30 whitespace-nowrap">
+                                            className="px-2.5 py-1 text-xs font-mono rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-slate-900 dark:hover:text-white transition-all border border-emerald-500/30 whitespace-nowrap">
                                             {showAllIssuers ? "Ver Top 10" : "Ver Todos"}
                                         </button>
                                     </div>
@@ -1946,11 +2012,11 @@ const App = () => {
                                             options={{
                                                 indexAxis: "y",
                                                 scales: {
-                                                    x: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } },
+                                                    x: { grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" } } },
                                                     y: { 
                                                         grid: { display: false }, 
                                                         ticks: { 
-                                                            color: "#E2E8F0", 
+                                                            color: isDarkMode ? "#E2E8F0" : "#475569", 
                                                             font: { family: "Inter", size: 10 },
                                                             callback: function(value) {
                                                                 let label = this.getLabelForValue(value);
@@ -1977,7 +2043,7 @@ const App = () => {
                 {activeTab === "investors" && investorCharts?.alloc_pie && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="glass-card rounded-2xl p-6 space-y-4">
-                            <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Demografia e Alocação de Investidores (R$ Bi)</h3>
+                            <h3 className="text-base font-bold text-slate-900 dark:text-white font-display border-b border-slate-200 dark:border-slate-800 pb-3">Demografia e Alocação de Investidores (R$ Bi)</h3>
                             <ChartWrapper
                                 type="bar"
                                 height={320}
@@ -1992,8 +2058,8 @@ const App = () => {
                                 }}
                                 options={{
                                     scales: {
-                                        x: { grid: { display: false }, ticks: { color: "#E2E8F0" } },
-                                        y: { grid: { color: "#1E293B" }, ticks: { color: "#94A3B8", font: { family: "JetBrains Mono" } } }
+                                        x: { grid: { display: false }, ticks: { color: isDarkMode ? "#E2E8F0" : "#475569" } },
+                                        y: { grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" } } }
                                     },
                                     plugins: { legend: { display: false } }
                                 }}
@@ -2001,7 +2067,7 @@ const App = () => {
                         </div>
 
                         <div className="glass-card rounded-2xl p-6 space-y-4">
-                            <h3 className="text-base font-bold text-white font-display border-b border-slate-800 pb-3">Share (%) Real Confirmado no Varejo vs Fundos</h3>
+                            <h3 className="text-base font-bold text-slate-900 dark:text-white font-display border-b border-slate-200 dark:border-slate-800 pb-3">Share (%) Real Confirmado no Varejo vs Fundos</h3>
                             <ChartWrapper
                                 type="pie"
                                 height={320}
@@ -2014,7 +2080,7 @@ const App = () => {
                                 }}
                                 options={{
                                     plugins: {
-                                        legend: { position: "bottom", labels: { color: "#E2E8F0", usePointStyle: true } }
+                                        legend: { position: "bottom", labels: { color: isDarkMode ? "#E2E8F0" : "#475569", usePointStyle: true } }
                                     }
                                 }}
                             />
@@ -2044,7 +2110,7 @@ const App = () => {
             )}
 
             {/* Footer */}
-            <footer className="glass-header mt-auto py-6 px-6 text-center text-xs text-slate-500 font-mono">
+            <footer className="glass-header mt-auto py-6 px-6 text-center text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400 font-mono">
                 <p>CVM Primários Monitor PRO © 2026 • Auditoria em Tempo Real • Conforme Resoluções CVM 160, ICVM 400 e 476</p>
             </footer>
         </div>

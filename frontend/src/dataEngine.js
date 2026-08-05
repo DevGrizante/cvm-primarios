@@ -25,6 +25,7 @@ export function filtrar(rows, filtros) {
     const idxList = toList(filtros.indexador);
     const pubList = toList(filtros.publico);
     const volMinList = toList(filtros.volume_min);
+    const coordList = toList(filtros.coordenador);
     const buscaLower = (filtros.busca || "").toLowerCase().trim();
     const dataDe = (filtros.data_de || "").trim();
     const dataAte = (filtros.data_ate || "").trim();
@@ -126,6 +127,18 @@ export function filtrar(rows, filtros) {
                 if (pbLower.includes("qualificados") && rPub.includes("qualificado")) { match = true; break; }
                 if (pbLower.includes("geral") && rPub.includes("geral")) { match = true; break; }
                 if (rPub.includes(pbLower)) { match = true; break; }
+            }
+            if (!match) return false;
+        }
+
+        if (!coordList.includes("Todos")) {
+            const rowCoords = Array.isArray(r.coordenadores_todos) ? r.coordenadores_todos : [];
+            const rLider = (r.lider || "").toLowerCase();
+            let match = false;
+            for (let c of coordList) {
+                const cLower = c.toLowerCase();
+                if (rLider.includes(cLower)) { match = true; break; }
+                if (rowCoords.some(rc => rc.toLowerCase().includes(cLower))) { match = true; break; }
             }
             if (!match) return false;
         }

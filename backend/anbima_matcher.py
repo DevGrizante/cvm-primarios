@@ -4,6 +4,20 @@ import os
 import sys
 import re
 import json
+import datetime
+
+def extract_date_from_filename(filepath):
+    filename = os.path.basename(filepath)
+    # expected format: titulos-privados-caracteristicas-DD-MM-YYYY-HH-MM-SS.xls
+    m = re.search(r'(\d{2}-\d{2}-\d{4}-\d{2}-\d{2}-\d{2})', filename)
+    if m:
+        date_str = m.group(1)
+        try:
+            return datetime.datetime.strptime(date_str, "%d-%m-%Y-%H-%M-%S")
+        except ValueError:
+            pass
+    # fallback to mtime if no valid date found in filename
+    return datetime.datetime.fromtimestamp(os.path.getmtime(filepath))
 
 def normalize_name(name):
     name = str(name).upper().strip()
@@ -61,7 +75,7 @@ def main():
         print("Nenhum arquivo .xls encontrado na pasta ANBIMA.")
         return
         
-    latest_anbima = max(anbima_files, key=os.path.getmtime)
+    latest_anbima = max(anbima_files, key=extract_date_from_filename)
     print(f"Lendo base ANBIMA mais recente: {os.path.basename(latest_anbima)}")
     df = pd.read_excel(latest_anbima, skiprows=1, header=None)
     

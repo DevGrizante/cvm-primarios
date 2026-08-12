@@ -783,7 +783,7 @@ const App = () => {
         publico: getInitialUrlParams().get("publico") || "Todos",
         volume_min: getInitialUrlParams().get("volume_min") || "Todos",
         coordenador: getInitialUrlParams().get("coordenador") || "Todos",
-        incluir_estimados: getInitialUrlParams().get("incluir_estimados") === "true" || false,
+        incluir_estimados: getInitialUrlParams().has("incluir_estimados") ? getInitialUrlParams().get("incluir_estimados") === "true" : true,
         data_de: getInitialUrlParams().get("data_de") || "2023-01",
         data_ate: getInitialUrlParams().get("data_ate") || ""
     });
@@ -812,6 +812,52 @@ const App = () => {
     const [coordenadoresList, setCoordenadoresList] = useState([]);
     const [sortBy, setSortBy] = useState(getInitialUrlParams().get("sort_by") || "Data_Clean");
     const [sortOrder, setSortOrder] = useState(getInitialUrlParams().get("sort_order") || "desc");
+
+    const [yoyYear1, setYoyYear1] = useState("2024");
+    const [yoyYear2, setYoyYear2] = useState("2025");
+    const [yoyYear3, setYoyYear3] = useState("2026");
+
+    const yoyChartData = useMemo(() => {
+        if (!datasetLoaded || !datasetRef.current) return null;
+        
+        // Filtra ignorando os filtros de data
+        const filtersWithoutDate = { ...filters, ano: "Todos", data_de: "Todos", data_ate: "Todos", incluir_estimados: true, busca: searchQuery };
+        const rowsIgnoringDate = filtrar(datasetRef.current, filtersWithoutDate);
+        
+        // Remove estimados se o filtro principal não incluir
+        const finalRows = filters.incluir_estimados !== false ? rowsIgnoringDate : rowsIgnoringDate.filter(r => !r.estimado);
+        
+        const vols = {
+            [yoyYear1]: { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 },
+            [yoyYear2]: { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 },
+            [yoyYear3]: { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 }
+        };
+        
+        finalRows.forEach(r => {
+            const r_ano = String(r.ano || "").trim();
+            const r_dt = (r.data || "").substring(0, 4);
+            const y = (r_dt && r_dt.length === 4) ? r_dt : r_ano;
+            
+            if (vols[y]) {
+                const v = r.volume || 0;
+                const idx = (r.indexador || "").toLowerCase();
+                if (idx.includes("cdi") || idx.includes("di")) vols[y].CDI += v;
+                else if (idx.includes("ipca") || idx.includes("infla") || idx.includes("inpc")) vols[y].IPCA += v;
+                else if (idx.includes("pré") || idx.includes("pre")) vols[y].PRE += v;
+                else vols[y].OUTROS += v;
+            }
+        });
+        
+        return {
+            labels: [yoyYear1, yoyYear2, yoyYear3],
+            datasets: [
+                { label: "CDI / DI", data: [vols[yoyYear1].CDI, vols[yoyYear2].CDI, vols[yoyYear3].CDI].map(v => (v / 1e9).toFixed(2)), backgroundColor: "#6366F1", borderRadius: 4 },
+                { label: "IPCA / Inflação", data: [vols[yoyYear1].IPCA, vols[yoyYear2].IPCA, vols[yoyYear3].IPCA].map(v => (v / 1e9).toFixed(2)), backgroundColor: "#F59E0B", borderRadius: 4 },
+                { label: "PRÉ (Prefixado)", data: [vols[yoyYear1].PRE, vols[yoyYear2].PRE, vols[yoyYear3].PRE].map(v => (v / 1e9).toFixed(2)), backgroundColor: "#10B981", borderRadius: 4 },
+                { label: "Outros", data: [vols[yoyYear1].OUTROS, vols[yoyYear2].OUTROS, vols[yoyYear3].OUTROS].map(v => (v / 1e9).toFixed(2)), backgroundColor: "#94A3B8", borderRadius: 4 }
+            ]
+        };
+    }, [datasetLoaded, filters, searchQuery, yoyYear1, yoyYear2, yoyYear3]);
 
     // Poll /api/bootstrap and fetch dataset
   useEffect(() => {
@@ -1021,7 +1067,7 @@ const App = () => {
             indexador: "Todos",
             publico: "Todos",
             regime: "Todos",
-            incluir_estimados: false,
+            incluir_estimados: true,
             data_de: "2023-01",
             data_ate: ""
         });
@@ -1932,6 +1978,89 @@ const App = () => {
                                         }
                                     }}
                                 />
+                            </div>
+                        )}
+
+                        {/* Gráfico YoY (Year over Year) por Indexador */}
+                        {yoyChartData && (
+                            <div className="glass-card rounded-2xl p-6 space-y-4 border border-slate-200 dark:border-slate-800/80 bg-gradient-to-br from-slate-900/90 to-slate-900/40">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
+                                    <div>
+                                        <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+                                            Comparação Ano a Ano (YoY) por Indexador (R$ Bi)
+                                        </h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                            Compara o volume de emissões entre os anos selecionados, separado por indexador. Afetado por todos os filtros (exceto Data/Ano).
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center space-x-4 text-xs font-mono">
+                                        <span className="flex items-center space-x-1.5 text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
+                                        <span className="flex items-center space-x-1.5 text-amber-400"><span className="w-3 h-3 rounded bg-amber-500 inline-block"></span><span>IPCA</span></span>
+                                        <span className="flex items-center space-x-1.5 text-emerald-400"><span className="w-3 h-3 rounded bg-emerald-500 inline-block"></span><span>PRÉ</span></span>
+                                    </div>
+                                </div>
+                                
+                                <ChartWrapper
+                                    type="bar"
+                                    height={300}
+                                    data={{
+                                        labels: yoyChartData.labels,
+                                        datasets: yoyChartData.datasets
+                                    }}
+                                    options={{
+                                        scales: {
+                                            y: { stacked: true, grid: { color: isDarkMode ? "#1E293B" : "#475569" }, ticks: { color: isDarkMode ? "#94A3B8" : "#475569", callback: v => `R$ ${v} Bi` } },
+                                            x: { stacked: true, grid: { display: false }, ticks: { color: isDarkMode ? "#E2E8F0" : "#475569", font: { family: "Inter", weight: "bold" } } }
+                                        },
+                                        plugins: { 
+                                            legend: { display: false },
+                                            tooltip: { mode: "index", intersect: false }
+                                        }
+                                    }}
+                                />
+                                
+                                <div className="flex items-center justify-around mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+                                    <div className="flex flex-col items-center">
+                                        <label className="text-xs font-semibold text-slate-500 mb-1">Coluna 1</label>
+                                        <select 
+                                            value={yoyYear1} 
+                                            onChange={(e) => setYoyYear1(e.target.value)}
+                                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-sm text-slate-900 dark:text-white"
+                                        >
+                                            <option value="2023">2023</option>
+                                            <option value="2024">2024</option>
+                                            <option value="2025">2025</option>
+                                            <option value="2026">2026</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <label className="text-xs font-semibold text-slate-500 mb-1">Coluna 2</label>
+                                        <select 
+                                            value={yoyYear2} 
+                                            onChange={(e) => setYoyYear2(e.target.value)}
+                                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-sm text-slate-900 dark:text-white"
+                                        >
+                                            <option value="2023">2023</option>
+                                            <option value="2024">2024</option>
+                                            <option value="2025">2025</option>
+                                            <option value="2026">2026</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <label className="text-xs font-semibold text-slate-500 mb-1">Coluna 3</label>
+                                        <select 
+                                            value={yoyYear3} 
+                                            onChange={(e) => setYoyYear3(e.target.value)}
+                                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-sm text-slate-900 dark:text-white"
+                                        >
+                                            <option value="2023">2023</option>
+                                            <option value="2024">2024</option>
+                                            <option value="2025">2025</option>
+                                            <option value="2026">2026</option>
+                                        </select>
+                                    </div>
+                                </div>
                             </div>
                         )}
 

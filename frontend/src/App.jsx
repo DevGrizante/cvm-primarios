@@ -997,6 +997,26 @@ const App = () => {
     return filters.incluir_estimados ? baseFilteredRows : baseFilteredRows.filter(r => !r.estimado);
   }, [baseFilteredRows, filters.incluir_estimados]);
 
+  const dateRangeLimits = useMemo(() => {
+    let minD = "2023-01";
+    let maxD = "2026-07";
+    
+    if (datasetLoaded && datasetRef.current && datasetRef.current.length > 0) {
+        let maxFound = "2000-01";
+        let minFound = "2099-12";
+        datasetRef.current.forEach(r => {
+            if (r.data && typeof r.data === 'string' && r.data.length >= 7) {
+                const ym = r.data.substring(0, 7);
+                if (ym > maxFound) maxFound = ym;
+                if (ym < minFound && ym >= "2023-01") minFound = ym;
+            }
+        });
+        if (maxFound !== "2000-01") maxD = maxFound;
+        if (minFound !== "2099-12") minD = minFound;
+    }
+    return { min: minD, max: maxD };
+  }, [datasetLoaded]);
+
   useEffect(() => {
     if (!datasetLoaded) return;
     setLoading(true);
@@ -1276,8 +1296,8 @@ const App = () => {
                     {/* Bottom Tier (or Center on 2xl): Date Range Slider */}
                     <div className="w-full 2xl:w-auto 2xl:flex-1 2xl:max-w-lg 2xl:mx-3 min-w-0">
                         <DateRangeSlider 
-                            minDateStr={status.options?.data_min && status.options?.data_min >= "2023-01" ? status.options?.data_min : "2023-01"} 
-                            maxDateStr={status.options?.data_max || "2026-07"} 
+                            minDateStr={status.options?.data_min && status.options?.data_min >= "2023-01" ? status.options?.data_min : dateRangeLimits.min} 
+                            maxDateStr={status.options?.data_max || dateRangeLimits.max} 
                             currentDe={filters.data_de} 
                             currentAte={filters.data_ate} 
                             onChange={(de, ate) => {

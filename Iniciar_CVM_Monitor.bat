@@ -49,7 +49,7 @@ echo ========================================================
 echo.
 
 :: Aguarda 2 segundos e manda abrir o navegador no Windows
-start "" "http://localhost:8000"
+start "" "http://localhost:8080"
 
 :: Roda o servidor do backend (o Uvicorn ou o run_server se houver)
 python main.py

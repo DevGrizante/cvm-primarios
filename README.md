@@ -15,15 +15,35 @@ cvm-monitor-pro/
 │   ├── dist/         Build de produção (estático, consumido pelo backend)
 │   ├── package.json
 │   └── tailwind.config.js
-├── Iniciar_CVM_Monitor.bat Atalho para inicialização
+├── Iniciar_CVM_Monitor.bat Inicializador autossuficiente (venv + deps + porta)
 └── README.md
 ```
 
 ## Como rodar (Windows)
 
-### 1. Build do Frontend (Interface)
+### Caminho normal: duplo clique em `Iniciar_CVM_Monitor.bat`
 
-O frontend é construído com React e Vite. Antes de iniciar o backend pela primeira vez ou sempre que fizer alterações visuais, é necessário compilar os arquivos estáticos:
+A única exigência é **Python 3.10+ instalado**. O script cuida do resto: acha o
+interpretador (inclusive via `py -3`, e rejeitando o atalho da Microsoft Store,
+que não executa nada), cria o ambiente virtual, instala as dependências, escolhe
+a porta, sobe o servidor e abre o navegador quando ele começa a responder.
+
+Aplicação em `http://localhost:8080`; a API e as docs ficam no mesmo endereço,
+em `/docs`.
+
+**Não é preciso Node.js nem npm para rodar.** A pasta `frontend/dist/` é
+versionada justamente para isso — o backend serve o build estático direto na
+raiz `/`. O npm só entra quando você for *alterar* a interface (ver abaixo).
+
+O `pip install` só roda quando o `requirements.txt` muda: o script guarda uma
+cópia dele dentro do venv e compara. Cliques seguintes sobem em segundos.
+
+**Rodando junto com o `Captacao_Resgate`:** os dois convivem na mesma máquina.
+As portas padrão não se cruzam (aqui 8080, lá 8000/5500), cada projeto tem o seu
+próprio ambiente virtual dentro da própria pasta, e se a 8080 estiver ocupada o
+script anda para a próxima livre em vez de subir por cima de um servidor alheio.
+
+### Alterando a interface (aí sim precisa de Node)
 
 ```bat
 cd frontend
@@ -31,23 +51,21 @@ npm install
 npm run build
 ```
 
-Isso irá popular a pasta `frontend/dist/`. O backend está configurado para servir estes arquivos diretamente na raiz `/`.
+Isso repopula `frontend/dist/`, que é o que o backend serve. Commite o `dist`
+junto com a alteração — é ele que mantém o "só Python" válido para quem apenas
+usa o sistema.
 
-### 2. Backend (API)
-
-O backend em FastAPI atua servindo os arquivos estáticos compilados e provendo a API de dados para o frontend.
+### Subindo o backend na mão
 
 ```bat
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+python main.py
 ```
 
-Acesse a aplicação em `http://localhost:8000`.
-
-> **Dica Rápida:** Você pode utilizar o script `Iniciar_CVM_Monitor.bat` na raiz do projeto. Ele inicializa o ambiente virtual e sobe o servidor automaticamente.
+A porta vem da variável de ambiente `PORT` (padrão 8080).
 
 ## Arquitetura de Dados
 

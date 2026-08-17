@@ -94,7 +94,7 @@ const getApiBase = () => {
     if (typeof window === "undefined") return "/api";
     if (window.location.protocol === "file:") return "http://localhost:8000/api";
     if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-        if (window.location.port !== "8000") return "http://localhost:8000/api";
+        if (window.location.port === "5173") return "http://localhost:8000/api";
     }
     return "/api";
 };

@@ -145,7 +145,12 @@ export function filtrar(rows, filtros) {
 
         if (buscaLower) {
             const blob = `${r.emissor || ""} ${r.lider || ""} ${r.id || ""} ${r.setor_ativo || ""} ${r.status || ""}`.toLowerCase();
-            if (!blob.includes(buscaLower)) return false;
+            if (!blob.includes(buscaLower)) {
+                // Fallback: busca por ticker das series (mapeamento de mercado secundario)
+                const series = Array.isArray(r.Series) ? r.Series : [];
+                const hitTicker = series.some(s => s && s.ticker && String(s.ticker).toLowerCase().includes(buscaLower));
+                if (!hitTicker) return false;
+            }
         }
 
         if (!incEst && r.estimado) {

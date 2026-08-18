@@ -1180,7 +1180,7 @@ const App = () => {
                             </div>
                             <input
                                 type="text"
-                                placeholder="Busque por Emissor, Coordenador, Ativo ou Processo..."
+                                placeholder="Busque por Emissor, Coordenador, Ativo, Processo ou Ticker..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="w-full pl-9 pr-8 py-2 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner"

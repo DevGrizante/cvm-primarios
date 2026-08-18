@@ -1958,7 +1958,8 @@ class CVMDataEngine:
                 if not match_coord: continue
             
             if busca_lower:
-                if busca_lower not in (r.get("_busca") or f"{r.get('Emissor','')} {r.get('Lider','')} {r.get('Consorcio','')} {r.get('Id_Processo','')} {r.get('Ativo','')} {r.get('Status','')}").lower():
+                _blob = (r.get("_busca") or f"{r.get('Emissor','')} {r.get('Lider','')} {r.get('Consorcio','')} {r.get('Id_Processo','')} {r.get('Ativo','')} {r.get('Status','')}").lower()
+                if busca_lower not in _blob and busca_lower not in (r.get("_busca_tickers") or ""):
                     continue
             
             res.append(r)
@@ -2009,6 +2010,7 @@ class CVMDataEngine:
                 r["Series"] = series_list
                 
             cnpj = r.get('CNPJ_Emissor', '')
+            row_tickers = []
             if series_list and cnpj and getattr(self, 'secondary_market', None):
                 import re
                 for s_idx, s_data in enumerate(series_list):
@@ -2050,11 +2052,16 @@ class CVMDataEngine:
                         
                     if mapping:
                         s_data["ticker"] = mapping.get("ticker")
+                        if mapping.get("ticker"):
+                            row_tickers.append(str(mapping.get("ticker")))
                         s_data["data_rentabilidade"] = mapping.get("data_rentabilidade")
                         if mapping.get("rentabilidade"):
                             s_data["taxa"] = mapping.get("rentabilidade")
                         if mapping.get("isin"):
                             s_data["isin"] = mapping.get("isin")
+
+            # Indice de busca por ticker (sobrescrito a cada rebuild para manter idempotencia)
+            r["_busca_tickers"] = " ".join(row_tickers).lower()
 
             # Optimize nulls/empty strings to None or empty to save bytes
             r_id = r.get('Numero_Requerimento') or r.get('Id_Processo') or ''

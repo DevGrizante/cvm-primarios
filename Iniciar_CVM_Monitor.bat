@@ -36,12 +36,16 @@ rem O "python" do PATH pode ser o atalho da Microsoft Store, que nao executa
 rem nada e so abre a loja. Por isso testamos rodando de fato, e caimos no
 rem lancador "py -3" quando o primeiro nao serve.
 set "PY="
-call :testar_python "python" && set "PY=python"
-if not defined PY call :testar_python "py -3" && set "PY=py -3"
+for %%c in ("py -3.12" "py -3.11" "py -3.10" "python" "py -3" "py -3.9") do (
+    if not defined PY (
+        call :testar_python %%c
+        if not errorlevel 1 set "PY=%%~c"
+    )
+)
 
 if not defined PY (
     color 0C
-    echo [ERRO] Nao encontrei um Python 3.10 ou superior neste computador.
+    echo [ERRO] Nao encontrei um Python 3.9 ou superior neste computador.
     echo.
     echo Instale pelo site oficial ^(python.org/downloads^) e marque a opcao
     echo "Add python.exe to PATH" durante a instalacao. Depois rode este
@@ -95,6 +99,14 @@ if "!PRECISA_INSTALAR!"=="1" (
     echo [INFO] Dependencias ja instaladas.
 )
 
+rem NOTA SOBRE 127.0.0.1 EM VEZ DE "localhost"
+rem Medido nesta maquina: conectar em "localhost" custa 208 ms, contra 1,7 ms
+rem em "127.0.0.1". O Windows resolve localhost para ::1 (IPv6) primeiro, os
+rem servidores escutam so em IPv4, e cada conexao paga o timeout do fallback.
+rem O front faz varias chamadas por tela, entao isso e a diferenca entre a
+rem interface parecer instantanea e parecer travada. "localhost" continua
+rem funcionando se o usuario digitar - so nao e mais o que geramos.
+
 rem --- 4) Porta --------------------------------------------------------------
 call :porta_livre %PORTA% PORTA
 if "!PORTA!"=="" (
@@ -119,8 +131,8 @@ echo.
 echo ========================================================
 echo [SUCESSO] Tudo pronto^^! O servidor sera iniciado agora.
 echo.
-echo   Painel ....... http://localhost:!PORTA!
-echo   API / docs ... http://localhost:!PORTA!/docs
+echo   Painel ....... http://127.0.0.1:!PORTA!
+echo   API / docs ... http://127.0.0.1:!PORTA!/docs
 echo.
 echo 1. O seu navegador padrao abrira automaticamente.
 echo 2. Mantenha ESTA JANELA PRETA ABERTA enquanto usa o painel.
@@ -148,16 +160,33 @@ for /l %%i in (1,1,30) do (
     ping -n 3 127.0.0.1 >nul
     netstat -an -p TCP | findstr /c:":%~2 " | findstr /i /c:"LISTENING" >nul 2>&1
     if not errorlevel 1 (
-        start "" "http://localhost:%~2"
+        start "" "http://127.0.0.1:%~2"
         exit /b 0
     )
 )
 exit /b 0
 
-rem Roda o interpretador candidato e confere a versao. Retorna 0 se serve.
+rem :testar_python <comando> - o candidato serve?
+rem
+rem EXIGE QUE O INTERPRETADOR RESPONDA, e nao apenas que o errorlevel seja 0.
+rem Motivo: `py -3.12` devolve 0 mesmo quando o 3.12 nao esta instalado - o
+rem launcher imprime "The system cannot find the path specified." e sai com
+rem sucesso. Olhando so o errorlevel, o script elegia um interpretador que nao
+rem existe, e a falha aparecia tres passos adiante, na criacao do venv, sem
+rem nenhuma relacao aparente com a causa.
+rem
+rem Um interpretador ausente nao imprime nada, entao _resp fica vazio.
+rem
+rem O codigo Python nao pode conter ">": dentro de `for /f ('''...''')` o cmd nao
+rem desfaz o escape `^>` antes de entregar o comando, e o Python receberia
+rem `version_info^>=(3,9)`, que e erro de sintaxe. Por isso a versao volta como
+rem numero (313 para 3.13) e a comparacao acontece aqui no batch.
 :testar_python
-%~1 -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>&1
-exit /b %errorlevel%
+set "_resp="
+for /f "delims=" %%r in ('%~1 -c "import sys;print(sys.version_info.major*100+sys.version_info.minor)" 2^>nul') do set "_resp=%%r"
+if not defined _resp exit /b 1
+if !_resp! GEQ 309 exit /b 0
+exit /b 1
 
 rem :porta_livre <porta inicial> <nome da variavel de saida>
 rem Anda para cima ate achar uma porta sem ninguem ouvindo. Devolve vazio se

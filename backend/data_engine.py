@@ -168,13 +168,18 @@ class CVMDataEngine:
                             "Lider": r.get("nomeCoordenadorLider") or "",
                             "CNPJ_Lider": r.get("cnpjCoordenadorLider") or "",
                             "Ativo": r.get("nomeValorMobiliario") or "",
-                            "Volume": vol_float,
+                            # Chaves canonicas: o restante do pipeline e o frontend leem
+                            # Volume_Float / Vencimento / Indexador (nao Volume / Vencimento_Clean).
+                            "Volume_Float": vol_float,
                             "Volume_Texto": r.get("valorTotalEmReais"),
+                            "Indexador": "Não Informado",
                             "Indexador_Tipo": "INDEFINIDO",
-                            "Indexador_Inferido": "0",
-                            "Taxa_Juros": 0.0,
-                            "Taxa_Declarada": "",
-                            "Vencimento_Clean": "",
+                            "Indexador_Inferido": False,
+                            "Taxa_Juros": "",
+                            "Taxa_Declarada": False,
+                            "Vencimento": "N/I",
+                            "Publico_Alvo": "Não Informado",
+                            "ESG": "Não Informado",
                             "Demografia_Detalhada": [],
                             "Vol_Pessoa_Fisica": 0.0,
                             "Vol_Fundos": 0.0,
@@ -498,11 +503,28 @@ class CVMDataEngine:
                 break
         return s
 
+    @staticmethod
+    def _normalize_number_str(val):
+        """Normaliza numero para o formato aceito por float().
+
+        O ZIP da CVM usa formato americano ("200000000.00") enquanto a API SRE
+        D+0 devolve formato brasileiro ("10.000.000,0000"). Sem tratar os dois,
+        valores com separador de milhar viravam 0.0.
+        """
+        s = str(val).strip()
+        if "," in s:
+            # BR: ponto e separador de milhar, virgula e decimal
+            s = s.replace(".", "").replace(",", ".")
+        elif s.count(".") > 1:
+            # Apenas separadores de milhar ("10.000.000")
+            s = s.replace(".", "")
+        return s
+
     def _parse_float(self, val):
         if not val or val == "N/A":
             return 0.0
         try:
-            return float(str(val).replace(",", "."))
+            return float(self._normalize_number_str(val))
         except:
             return 0.0
 
@@ -510,7 +532,7 @@ class CVMDataEngine:
         if not val or val == "N/A":
             return 0
         try:
-            return int(float(str(val).replace(",", ".")))
+            return int(float(self._normalize_number_str(val)))
         except:
             return 0
 
@@ -651,7 +673,7 @@ class CVMDataEngine:
         elif "NOTA COMERCIAL" in ativo or "PROMISS" in ativo:
             return "CDI / DI", True
 
-        return "Outros / Não Informado", False
+        return "Não Informado", False
 
     def _extract_taxa_juros(self, r, idx_type, is_hist=False):
         if is_hist:
@@ -1362,7 +1384,17 @@ class CVMDataEngine:
                         print(f"[RECOVERY] Successfully recovered {len(cached_sre)} entries via regex salvage!")
                 if cached_sre:
                     try:
-                        tmp_p = sre_cache_path + ".tmp"
+                        # Preserva o arquivo original: a recuperacao pode ser PARCIAL e
+                        # reescrever por cima descartaria o restante para sempre.
+                        bak_p = sre_cache_path + ".corrompido.bak"
+                        if not os.path.exists(bak_p):
+                            import shutil
+                            shutil.copy2(sre_cache_path, bak_p)
+                            print(f"[RECOVERY] Backup do arquivo original salvo em {bak_p}")
+                    except Exception as _e:
+                        print(f"[RECOVERY] Falha ao criar backup: {_e}")
+                    try:
+                        tmp_p = sre_cache_path + f".{os.getpid()}.tmp"
                         with open(tmp_p, "w", encoding="utf-8") as f:
                             json.dump(cached_sre, f, ensure_ascii=False)
                         os.replace(tmp_p, sre_cache_path)
@@ -1430,7 +1462,7 @@ class CVMDataEngine:
                                     r["Indexador"] = "CDI / DI"
                                     r["Indexador_Tipo"] = "CDI+"
                                 else:
-                                    r["Indexador"] = "PR\xe9 (Prefixado)"
+                                    r["Indexador"] = "PR\xc9 (Prefixado)"
                                     r["Indexador_Tipo"] = "PR"
                                     
                                 r["Caracteristicas_CVM"] = majority_series["campos"]
@@ -1507,7 +1539,7 @@ class CVMDataEngine:
         anos = sorted(list(set(r["Ano"] for r in self.rows)), reverse=True)
         ativos = sorted(list(set(r["Ativo"] for r in self.rows if r["Ativo"] != "Não Informado")))
         status_list = sorted(list(set(r["Status"] for r in self.rows if r["Status"] != "Não Informado")))
-        indexadores = ["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)", "Outros / Não Informado"]
+        indexadores = ["Todos", "CDI / DI", "IPCA / Inflação", "PRÉ (Prefixado)", "Não Informado"]
         
         valid_dates = sorted(list(set(str(r.get("Data_Clean", ""))[:7] for r in self.rows if len(str(r.get("Data_Clean", ""))) >= 7 and str(r.get("Data_Clean", ""))[:4].isdigit() and str(r.get("Data_Clean", ""))[:7] >= "2023-01")))
         data_min = valid_dates[0] if valid_dates else "2023-01"
@@ -1588,8 +1620,12 @@ class CVMDataEngine:
                 try:
                     with open(sre_cache_path, "r", encoding="utf-8") as f:
                         cached_sre = json.load(f)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Antes isso passava em silencio e o save posterior
+                    # sobrescrevia o cache inteiro com o pouco que fosse baixado.
+                    print(f"[CACHE] Nao foi possivel ler sre_enrichment_cache ({e}). "
+                          f"O save usa merge com o disco, entao nada sera perdido.")
+                    cached_sre = {}
             
             candidates = [
                 r for r in self.rows
@@ -1754,7 +1790,7 @@ class CVMDataEngine:
                             r["Indexador"] = "CDI / DI"
                             r["Indexador_Tipo"] = "CDI+"
                         else:
-                            r["Indexador"] = "PR\xe9 (Prefixado)"
+                            r["Indexador"] = "PR\xc9 (Prefixado)"
                             r["Indexador_Tipo"] = "PR"
                             
                         r["Caracteristicas_CVM"] = majority_series["campos"]
@@ -1787,22 +1823,51 @@ class CVMDataEngine:
                 return updated
 
             from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _merge_disk(path, em_memoria):
+                """Funde o que esta em disco com o que esta em memoria.
+
+                O cache so pode CRESCER. Sem isso, uma leitura que falhou
+                (cached_sre = {}) ou uma recuperacao parcial sobrescrevia o
+                arquivo inteiro com um subconjunto - perda silenciosa de dados.
+                """
+                em_disco = {}
+                try:
+                    if os.path.exists(path):
+                        with open(path, "r", encoding="utf-8") as f:
+                            em_disco = json.load(f)
+                except Exception:
+                    em_disco = {}
+                if not isinstance(em_disco, dict):
+                    em_disco = {}
+                if not em_disco:
+                    return dict(em_memoria)
+                fundido = dict(em_disco)
+                fundido.update(em_memoria)   # entradas novas/atualizadas vencem
+                return fundido
+
+            def _escrever_atomico(path, dados):
+                # PID no nome do temporario: dois processos escrevendo ao mesmo
+                # tempo nao podem mais trocar de conteudo entre si.
+                tmp_p = f"{path}.{os.getpid()}.tmp"
+                with open(tmp_p, "w", encoding="utf-8") as f:
+                    json.dump(dados, f, ensure_ascii=False)
+                os.replace(tmp_p, path)
+
             def _save_sre_cache():
                 try:
-                    tmp_p = sre_cache_path + ".tmp"
-                    with open(tmp_p, "w", encoding="utf-8") as f:
-                        json.dump(cached_sre, f, ensure_ascii=False)
-                    os.replace(tmp_p, sre_cache_path)
-                except Exception:
-                    pass
+                    fundido = _merge_disk(sre_cache_path, cached_sre)
+                    if len(fundido) < len(cached_sre):
+                        print("[CACHE] Merge inconsistente; gravacao abortada por seguranca.")
+                    else:
+                        _escrever_atomico(sre_cache_path, fundido)
+                except Exception as e:
+                    print(f"[CACHE] Falha ao salvar sre_enrichment_cache: {e}")
                 try:
                     consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
-                    tmp_c = consorcio_cache_path + ".tmp"
-                    with open(tmp_c, "w", encoding="utf-8") as f:
-                        json.dump(self.consorcio_cache, f, ensure_ascii=False)
-                    os.replace(tmp_c, consorcio_cache_path)
-                except Exception:
-                    pass
+                    _escrever_atomico(consorcio_cache_path,
+                                      _merge_disk(consorcio_cache_path, self.consorcio_cache))
+                except Exception as e:
+                    print(f"[CACHE] Falha ao salvar consorcio_cache: {e}")
 
             updated_count = 0
             batch_size = 20

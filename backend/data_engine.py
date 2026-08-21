@@ -18,6 +18,66 @@ ZIP_PATH = os.path.join(CACHE_DIR, "oferta_distribuicao.zip")
 SCRATCH_ZIP = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "oferta_distribuicao.zip"))
 NTNB_VERTICES = [2026, 2027, 2028, 2029, 2030, 2032, 2035, 2040, 2045, 2050, 2055, 2060]
 
+# Taxas ancoradas na curva PRE. O "DI1" de "Pre DI1-F32 + 0,43%" e o codigo do
+# contrato futuro de DI da B3 (o vertice da curva de juros), NAO um indexador
+# pos-fixado: a remuneracao resultante e prefixada. Exige o codigo de contrato
+# completo (letra do mes + 2 digitos) para nao capturar "DI 1,55%", que e CDI.
+PRE_FORTE_RE = re.compile(
+    r"^\s*PR[EE\u00c9]\b"                          # string comeca com "Pre"/"Pre"
+    r"|\bPR[EE\u00c9]\s+DI\s*1\b"                 # "Pre DI1..."
+    r"|\bDI\s*1\s*[-\u2013\s]?\s*[A-Z]\s*\d{2}\b"  # contrato futuro: DI1-F32, DI1F32
+)
+
+# Marcadores de "o maior entre as duas taxas". Quando presentes, a heuristica
+# numerica precisa olhar o MAIOR percentual da string, e nao o primeiro: em
+# "... + 0,43% a.a. ou 14,99% a.a., dos dois o maior" o 0,43% e spread sobre a
+# curva e o 14,99% e a taxa cheia que de fato remunera.
+TAXA_MAIOR_RE = re.compile(
+    r"\bO\s+MAIOR\b|\bMAIOR\s+(?:TAXA\s+)?ENTRE\b|\bDOS\s+DOIS\b|\bPREVALECER[A\u00c1]\s+O\s+MAIOR\b"
+)
+_PCT_RE = re.compile(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)\s*%")
+
+
+def _pct_para_float(txt):
+    x = txt.replace(".", "").replace(",", ".") if "," in txt else txt
+    try:
+        return float(x)
+    except ValueError:
+        return None
+
+
+def classificar_familia(taxa):
+    """Familia do indexador a partir da string de remuneracao: IPCA | CDI | PRE.
+
+    Fonte unica de verdade para o rotulo curto das series. Repete exatamente a
+    precedencia de _sync_row_indexador -- inclusive PRE_FORTE_RE antes de CDI,
+    para que "Pre DI1-F32 + 0,38%" nao seja lido como pos-fixado.
+    Devolve "" quando a string nao carrega evidencia de indexador.
+    """
+    t = str(taxa or "").upper()
+    if not t.strip():
+        return ""
+    if any(w in t for w in ("IPCA", "NTNB", "NTN-B", "TESOURO IPCA", "TN-B",
+                            "INPC", "IGP-M", "IGPM", "INCC", "INFLA")):
+        return "IPCA"
+    if PRE_FORTE_RE.search(t):
+        return "PR\u00c9"
+    if re.search(r"\b(?:CDI|DI|SELIC|ANBID|LIBOR|OVER)\b", t) or "FLUTUANTE" in t or "TAXA DI" in t:
+        return "CDI"
+    if any(w in t for w in ("PREFIX", "PR\u00c9-FIX", "PRE-FIX", "PR\u00c9 FIX", "PRE FIX",
+                            "TAXA FIXA", "JUROS FIXOS")) or re.search(r"\bPR[E\u00c9]\b", t):
+        return "PR\u00c9"
+    return ""
+
+
+# Rotulo canonico da linha -> rotulo curto da serie (fallback quando a string
+# da serie nao tem evidencia propria).
+_FAMILIA_POR_ROTULO = {
+    "IPCA / Infla\u00e7\u00e3o": "IPCA",
+    "CDI / DI": "CDI",
+    "PR\u00c9 (Prefixado)": "PR\u00c9",
+}
+
 SCHEMA_VERSION = 12
 
 class CVMDataEngine:
@@ -619,6 +679,10 @@ class CVMDataEngine:
         taxa_str = str(row_dict.get("Taxa_Juros", "")).upper()
         if any(w in taxa_str for w in ("NTN-B", "NTNB", "TESOURO IPCA", "TN-B", "IPCA", "INFLA", "INPC", "IGP-M", "IGPM", "INCC")):
             return "IPCA / Inflação", False
+        # Curva PRE (contrato futuro de DI) tem precedencia sobre a familia CDI:
+        # "Pre DI1-F32 + 0,43%" e prefixado, nao pos-fixado.
+        if PRE_FORTE_RE.search(taxa_str):
+            return "PRÉ (Prefixado)", False
         if (any(w in taxa_str for w in ("CDI", "TAXA DI", "100% DI", "FLUTUANTE"))
                 or re.search(r"\b(?:SELIC|ANBID|LIBOR)\b", taxa_str)
                 or re.search(r"\bDI\s*[\+\-]", taxa_str)):
@@ -778,6 +842,15 @@ class CVMDataEngine:
             r["Indexador_Inferido"] = False
             return
 
+        # 1.5. Curva PRE (contrato futuro de DI). Precisa vir ANTES da familia CDI
+        #      e, sobretudo, antes da heuristica numerica 3b: em
+        #      "Pre DI1-F32 + 0,43% a.a. ou 14,99% a.a., dos dois o maior"
+        #      o 0,43% e spread sobre a curva, e a banda o lia como spread de CDI.
+        if PRE_FORTE_RE.search(t_upper):
+            r["Indexador"] = "PRÉ (Prefixado)"
+            r["Indexador_Inferido"] = False
+            return
+
         # 2. Família CDI/pós-fixado flutuante
         if CDI_TERMS_RE.search(t_upper) or "FLUTUANTE" in t_upper or "TAXA DI" in t_upper:
             r["Indexador"] = "CDI / DI"
@@ -785,19 +858,19 @@ class CVMDataEngine:
             return
 
         # 3a. PRÉ com termo explícito (prefixado escrito na taxa) — certeza.
-        if any(w in t_upper for w in PRE_TERMS):
+        #     O \bPR[EÉ]\b cobre "Pré" isolado; fica depois da regra 2 de proposito,
+        #     para que "CDI + 2% (pré-pagamento)" continue sendo CDI.
+        if any(w in t_upper for w in PRE_TERMS) or re.search(r"\bPR[EÉ]\b", t_upper):
             r["Indexador"] = "PRÉ (Prefixado)"
             r["Indexador_Inferido"] = False
             return
 
         # 3b. Taxa numérica PURA (sem nenhuma keyword de indexador): classificar por banda.
-        m_num = re.search(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)\s*%", taxa)
-        if m_num:
-            raw_num = m_num.group(1).replace(".", "").replace(",", ".") if "," in m_num.group(1) else m_num.group(1)
-            try:
-                val = float(raw_num)
-            except ValueError:
-                return
+        #     Com marcador de "dos dois o maior", vale o MAIOR percentual da string;
+        #     sem marcador, mantem-se o primeiro (comportamento anterior).
+        _vals = [v for v in (_pct_para_float(x) for x in _PCT_RE.findall(taxa)) if v is not None]
+        if _vals:
+            val = max(_vals) if TAXA_MAIOR_RE.search(t_upper) else _vals[0]
 
             if val >= 12.0:
                 r["Indexador"] = "PRÉ (Prefixado)"
@@ -1635,11 +1708,8 @@ class CVMDataEngine:
                         if resp.status == 200:
                             data = json.loads(resp.read().decode("utf-8"))
                             def _get_idx(t_str):
-                                t_u = str(t_str).upper()
-                                if "IPCA" in t_u or "NTNB" in t_u or "NTN-B" in t_u or "INFLA" in t_u: return "IPCA"
-                                if "CDI" in t_u or "DI " in t_u or " DI" in t_u or "FLUTUANTE" in t_u: return "CDI"
-                                if "PRE" in t_u or "PRÉ" in t_u or "FIXA" in t_u: return "PRE"
-                                return "OUTROS"
+                                # Fonte unica: mesma precedencia de _sync_row_indexador.
+                                return classificar_familia(t_str) or "OUTROS"
                             def _parse_vol(v_str):
                                 if not v_str: return 0.0
                                 try: return float(str(v_str).replace(".", "").replace(",", "."))
@@ -2110,6 +2180,14 @@ class CVMDataEngine:
                             s_data["taxa"] = mapping.get("rentabilidade")
                         if mapping.get("isin"):
                             s_data["isin"] = mapping.get("isin")
+
+            # Rotulo curto do indexador de cada serie. Recalculado AQUI, e nao no
+            # fetch, por dois motivos: corrige entradas antigas do cache SRE sem
+            # precisar rebuscar a API, e roda depois do merge Anbima, que pode
+            # ter substituido s["taxa"] pela rentabilidade do secundario.
+            _fam_linha = _FAMILIA_POR_ROTULO.get(str(r.get("Indexador", "")).strip(), "")
+            for _s in series_list:
+                _s["idx_type"] = classificar_familia(_s.get("taxa")) or _fam_linha or _s.get("idx_type") or ""
 
             # Indice de busca por ticker (sobrescrito a cada rebuild para manter idempotencia)
             r["_busca_tickers"] = " ".join(row_tickers).lower()

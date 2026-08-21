@@ -375,6 +375,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
     if (!initialOffer) return null;
     const [liveOffer, setLiveOffer] = useState(initialOffer);
     const [loadingApi, setLoadingApi] = useState(false);
+    const [mostrarZerados, setMostrarZerados] = useState(false);
 
     // Guarda o ultimo Id ja consultado. Sem isto o ciclo e:
     // fetch -> onUpdateOffer -> setSelectedOffer(objeto novo) -> nova identidade de
@@ -472,94 +473,86 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                 </div>
 
                 {/* Drawer Body Scrollable */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {/* Executive Summary Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">Volume Oficial Registrado</span>
-                            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400 font-display">{formatCurrency(offer.Volume_Float)}</span>
-                        </div>
-                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">Ativo / Tipo</span>
-                            <span className="text-base font-semibold text-slate-900 dark:text-white truncate block" title={offer.Ativo}>{offer.Ativo}</span>
-                        </div>
-                        <div className="p-4 bg-slate-100 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 col-span-2 md:col-span-1">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">Status CVM</span>
-                            <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20 inline-block mt-0.5">
-                                {offer.Status}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* Credit Desk Remuneration Section (Spotless Audit) */}
-                    <div className="p-5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800/80 space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                            <span className="text-sm font-semibold text-slate-600 dark:text-slate-300 flex items-center">
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Faixa unica: resumo executivo + remuneracao (antes eram dois blocos empilhados) */}
+                    <div className="bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800/80 overflow-hidden">
+                        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
+                            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center">
                                 <Icons.Award />
-                                <span className="ml-1.5">Remuneração e Indexador da Oferta</span>
+                                <span className="ml-1.5">Resumo da Oferta &amp; Remunera&ccedil;&atilde;o</span>
                             </span>
-                            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getIndexerColorClass(offer.Indexador)}`}>
-                                {offer.Indexador}
-                            </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-                            <div>
-                                <span className="text-xs text-slate-500 dark:text-slate-400 block">Indexador Encontrado</span>
-                                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-0.5 flex items-center">
-                                    {offer.Indexador || "Não Informado"}
-                                    {!offer.Indexador_Inferido || offer.Taxa_Declarada ? (
-                                        <span className="ml-2 text-[11px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 inline-flex items-center">
-                                            <Icons.Shield className="w-3 h-3 mr-1 inline" /> Oficial CVM / SRE
-                                        </span>
-                                    ) : (
-                                        <span className="ml-2 text-[11px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                                            ESTIMADO
-                                        </span>
-                                    )}
-                                </span>
-                            </div>
-                            <div>
-                                <span className="text-xs text-slate-500 dark:text-slate-400 block">Status da Remuneração (Spread/Juros)</span>
-                                <span className="text-sm font-semibold mt-0.5 block">
-                                    {isTaxaConfirmada ? (
-                                        <span className="text-emerald-600 dark:text-emerald-400">{offer.Taxa_Juros}</span>
-                                    ) : (
-                                        <span className="text-amber-600 dark:text-amber-400 font-mono text-xs bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20 block inline-flex items-center">
-                                            <Icons.Clock className="w-3.5 h-3.5 mr-1.5 inline" /> {offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}
-                                        </span>
-                                    )}
-                                </span>
-                            </div>
-                        </div>
-
-                        {/* Botão de Deep-Link Oficial para SRE CVM */}
-                        <div className="pt-2">
                             <a
                                 href={offer.Link_CVM_SRE || (offer.Numero_Requerimento || offer.Id_Processo ? `https://web.cvm.gov.br/app/sre-publico/#/oferta-publica/${offer.Numero_Requerimento || offer.Id_Processo}` : "#")}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/25 border border-indigo-400/30 w-full"
+                                className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-colors border border-indigo-400/30 shadow shadow-indigo-600/20"
                             >
-                                <Icons.ExternalLink className="w-4 h-4 shrink-0" />
-                                <span>Ver Oferta Completa no SRE (CVM) ↗</span>
+                                <Icons.ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                <span>Ver oferta completa no SRE (CVM) &#8599;</span>
                             </a>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 p-2">
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Volume Registrado</span>
+                                <span className="text-base font-bold text-emerald-600 dark:text-emerald-400 font-display">{formatCurrency(offer.Volume_Float)}</span>
+                            </div>
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800 min-w-0">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Ativo / Tipo</span>
+                                <span className="text-sm font-semibold text-slate-900 dark:text-white truncate block" title={offer.Ativo}>{offer.Ativo}</span>
+                            </div>
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800 min-w-0">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Status CVM</span>
+                                <span className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 inline-block truncate max-w-full" title={offer.Status}>
+                                    {offer.Status}
+                                </span>
+                            </div>
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800 min-w-0">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Indexador</span>
+                                <span className="flex items-center gap-1.5 flex-wrap">
+                                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${getIndexerColorClass(offer.Indexador)}`}>
+                                        {offer.Indexador || "Não Informado"}
+                                    </span>
+                                    {!offer.Indexador_Inferido || offer.Taxa_Declarada ? (
+                                        <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 inline-flex items-center" title="Indexador confirmado na base oficial CVM / SRE">
+                                            <Icons.Shield className="w-3 h-3 mr-1 inline" /> Oficial
+                                        </span>
+                                    ) : (
+                                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20" title="Indexador inferido por heurística — não declarado pela CVM">
+                                            Estimado
+                                        </span>
+                                    )}
+                                </span>
+                            </div>
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800 min-w-0">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Remunera&ccedil;&atilde;o (Spread/Juros)</span>
+                                {isTaxaConfirmada ? (
+                                    <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 block truncate" title={offer.Taxa_Juros}>{offer.Taxa_Juros}</span>
+                                ) : (
+                                    <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 flex items-center min-w-0" title={offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}>
+                                        <Icons.Clock className="w-3 h-3 mr-1 inline shrink-0" />
+                                        <span className="truncate">{offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}</span>
+                                    </span>
+                                )}
+                            </div>
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800 min-w-0">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Vencimento (MM/AA)</span>
+                                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 font-mono">{resolveVencimento(offer) || "—"}</span>
+                            </div>
                         </div>
                     </div>
 
                     {/* Características do Valor Mobiliário (API REST Oficial CVM) */}
-                    {/* Características do Valor Mobiliário (API REST Oficial CVM) */}
                     {offer.Series && offer.Series.length > 0 ? (
-                        <div className="mt-8 space-y-4">
+                        <div className="space-y-2">
                             <h4 className="flex items-center space-x-2 text-sm font-bold text-indigo-700 dark:text-indigo-300 font-display uppercase tracking-wider mb-2">
                                 <Icons.Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                                 <span>Detalhamento das Séries ({offer.Series.length})</span>
                             </h4>
-                            <div className="space-y-4">
+                            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(350px,100%),1fr))] gap-3 items-start">
                                 {offer.Series.map((s, idx) => (
                                     <div key={idx} className="bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-700/60 overflow-hidden shadow-lg shadow-slate-200/50 dark:shadow-slate-900/50">
                                         {/* Cabeçalho da Série */}
-                                        <div className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-300 dark:border-slate-700/60">
+                                        <div className="bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-900 px-3 py-2 flex items-center justify-between gap-2 border-b border-slate-300 dark:border-slate-700/60">
                                             <div className="flex items-center gap-3">
                                                 <span className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">
                                                     {s.nome || `${idx + 1}ª Série`}
@@ -582,17 +575,17 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                         </div>
                                         
                                         {/* Corpo da Série */}
-                                        <div className="p-4 space-y-4">
+                                        <div className="p-3 space-y-2.5">
                                             {/* Data e Taxa */}
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="grid grid-cols-2 gap-2">
                                                 {s.venc && !VENC_INVALIDO.has(String(s.venc).trim()) && (
-                                                    <div className="bg-slate-100 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-200 dark:border-slate-700/40">
+                                                    <div className="bg-slate-100 dark:bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700/40 min-w-0">
                                                         <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider block mb-1">Vencimento</span>
                                                         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{s.venc}</span>
                                                     </div>
                                                 )}
                                                 {s.data_rentabilidade && (
-                                                    <div className="bg-slate-100 dark:bg-slate-800/40 p-3 rounded-lg border border-amber-500/20 shadow-inner">
+                                                    <div className="bg-slate-100 dark:bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-amber-500/20 shadow-inner min-w-0">
                                                         <span className="flex items-center text-[10px] text-amber-600 dark:text-amber-400/80 font-mono uppercase tracking-wider mb-1">
                                                             <Icons.Calendar className="w-3 h-3 mr-1 inline" /> Rentabilidade
                                                         </span>
@@ -600,20 +593,20 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                     </div>
                                                 )}
                                                 {s.taxa && String(s.taxa).trim() && String(s.taxa).trim() !== "0" && (
-                                                    <div className="bg-slate-100 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-200 dark:border-slate-700/40 md:col-span-2">
+                                                    <div className="bg-slate-100 dark:bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700/40 col-span-2">
                                                         <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
-                                                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
+                                                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-snug max-h-20 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
                                                     </div>
                                                 )}
                                             </div>
                                             
                                             {/* Campos Adicionais */}
                                             {s.campos && s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração" && !(s.data_rentabilidade && c.campoNome === "Data de emissão")).length > 0 && (
-                                                <div className="mt-4">
-                                                    <h5 className="text-[10px] font-mono text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-200 dark:border-slate-800 pb-1">Outras Informações</h5>
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                                                <div className="mt-2">
+                                                    <h5 className="text-[10px] font-mono text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5 border-b border-slate-200 dark:border-slate-800 pb-1">Outras Informações</h5>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto custom-scrollbar pr-1">
                                                         {s.campos.filter(c => c.visivel && c.campoValor && c.campoNome !== "Informações sobre remuneração" && !(s.data_rentabilidade && c.campoNome === "Data de emissão")).map((c, i) => (
-                                                            <div key={i} className="p-2.5 bg-slate-100 dark:bg-slate-800/20 rounded border border-slate-200 dark:border-slate-800/50">
+                                                            <div key={i} className="px-2 py-1.5 bg-slate-100 dark:bg-slate-800/20 rounded border border-slate-200 dark:border-slate-800/50 min-w-0">
                                                                 <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono block leading-tight">{c.campoNome}</span>
                                                                 <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-1 block break-words">{c.campoValor}</span>
                                                             </div>
@@ -681,10 +674,16 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                         const totalVol = demogList.reduce((acc, curr) => acc + (Number(curr.vol_alocado) || 0), 0);
                         const baseFloat = offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : (totalVol > 0 ? totalVol : 1);
 
+                        // Totais acima ja foram somados sobre a lista COMPLETA: colapsar
+                        // as categorias zeradas e apenas visual, nenhum numero muda.
+                        const comDado = demogList.filter(d => (Number(d.investidores) || 0) > 0 || (Number(d.vol_alocado) || 0) > 0);
+                        const zerados = demogList.length - comDado.length;
+                        const visiveis = (mostrarZerados || comDado.length === 0) ? demogList : comDado;
+
                         return (
-                            <div className="space-y-3">
+                            <div>
                                 <div className="bg-white/95 dark:bg-slate-900/95 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-xl overflow-hidden">
-                                    <div className="bg-gradient-to-r from-blue-50 to-slate-100 dark:from-[#002850] dark:via-slate-900 dark:to-slate-900 border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between">
+                                    <div className="bg-gradient-to-r from-blue-50 to-slate-100 dark:from-[#002850] dark:via-slate-900 dark:to-slate-900 border-b border-slate-200 dark:border-slate-700 px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
                                         <div>
                                             <h4 className="text-sm font-bold text-blue-800 dark:text-blue-300 tracking-wide font-display flex items-center gap-2">
                                                 <Icons.BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -694,6 +693,17 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                 Data Encerramento: {offer.Data_Encerramento || offer.Data_Registro || offer.Data_Clean || "Em andamento"}
                                             </span>
                                         </div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                        {zerados > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setMostrarZerados(v => !v)}
+                                                title="As categorias sem investidores e sem volume ficam ocultas por padrão. Os totais consideram todas."
+                                                className="text-[11px] font-mono text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 transition-colors"
+                                            >
+                                                {mostrarZerados ? `Ocultar ${zerados} categorias zeradas` : `+ ${zerados} categorias zeradas`}
+                                            </button>
+                                        )}
                                         {offer.Alocacao_Pendente ? (
                                             <span className="text-xs text-amber-600 dark:text-amber-400 font-mono bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/20 inline-flex items-center shadow-sm">
                                                 <Icons.Clock className="w-3.5 h-3.5 mr-1.5 inline shrink-0" /> Alocação Pendente (Bookbuilding)
@@ -703,33 +713,34 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                 <Icons.CheckCircle className="w-3.5 h-3.5 mr-1.5 inline shrink-0" /> 100% Confirmada CVM
                                             </span>
                                         )}
+                                        </div>
                                     </div>
 
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-left text-xs">
                                             <thead className="bg-blue-100 dark:bg-[#003366] text-slate-700 dark:text-white uppercase font-mono text-[11px] border-b border-blue-200 dark:border-blue-800">
                                                 <tr>
-                                                    <th className="py-3 px-4 font-bold border-r border-blue-200 dark:border-blue-800/60 min-w-[260px]">Segmento / Categoria do Investidor</th>
-                                                    <th className="py-3 px-4 text-right font-bold border-r border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-[#002850] min-w-[120px]">Número de Investidores</th>
-                                                    <th className="py-3 px-4 text-right font-bold border-r border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-[#002850] min-w-[140px] text-blue-800 dark:text-blue-200">Volume Alocado (R$)</th>
-                                                    <th className="py-3 px-4 text-right font-bold min-w-[85px] text-blue-800 dark:text-blue-200">Share (%)</th>
+                                                    <th className="py-2 px-3 font-bold border-r border-blue-200 dark:border-blue-800/60 min-w-[200px]">Segmento / Categoria do Investidor</th>
+                                                    <th className="py-2 px-3 text-right font-bold border-r border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-[#002850] min-w-[120px]">Número de Investidores</th>
+                                                    <th className="py-2 px-3 text-right font-bold border-r border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-[#002850] min-w-[140px] text-blue-800 dark:text-blue-200">Volume Alocado (R$)</th>
+                                                    <th className="py-2 px-3 text-right font-bold min-w-[85px] text-blue-800 dark:text-blue-200">Share (%)</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-800/80 text-slate-600 dark:text-slate-300">
-                                                {demogList.map((row, idx) => {
+                                                {visiveis.map((row, idx) => {
                                                     const sharePct = ((row.vol_alocado || 0) / baseFloat) * 100;
                                                     return (
                                                         <tr key={idx} className="odd:bg-slate-100 dark:odd:bg-slate-950/60 even:bg-slate-50 dark:even:bg-slate-900/30 hover:bg-slate-200 dark:hover:bg-slate-800/60 transition-colors">
-                                                            <td className="py-2.5 px-4 font-medium text-slate-700 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800/60 leading-snug">
+                                                            <td className="py-1.5 px-3 font-medium text-slate-700 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800/60 leading-snug">
                                                                 {row.categoria}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-200 dark:border-slate-800/60 text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/30">
+                                                            <td className="py-1.5 px-3 text-right font-mono border-r border-slate-200 dark:border-slate-800/60 text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/30">
                                                                 {Number(row.investidores || 0).toLocaleString("pt-BR")}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono border-r border-slate-200 dark:border-slate-800/60 text-emerald-600 dark:text-emerald-400 bg-slate-50 dark:bg-slate-900/30">
+                                                            <td className="py-1.5 px-3 text-right font-mono border-r border-slate-200 dark:border-slate-800/60 text-emerald-600 dark:text-emerald-400 bg-slate-50 dark:bg-slate-900/30">
                                                                 {formatCurrency(row.vol_alocado || 0)}
                                                             </td>
-                                                            <td className="py-2.5 px-4 text-right font-mono text-slate-500 dark:text-slate-400 font-semibold">
+                                                            <td className="py-1.5 px-3 text-right font-mono text-slate-500 dark:text-slate-400 font-semibold">
                                                                 {sharePct.toFixed(2)}%
                                                             </td>
                                                         </tr>
@@ -738,10 +749,10 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                             </tbody>
                                             <tfoot className="bg-blue-100 dark:bg-[#002040] text-blue-900 dark:text-white font-mono text-xs border-t-2 border-blue-300 dark:border-blue-500 font-semibold">
                                                 <tr>
-                                                    <td className="py-3 px-4 uppercase tracking-wider border-r border-blue-900">Total da Oferta / Colocação</td>
-                                                    <td className="py-3 px-4 text-right border-r border-blue-900 text-amber-700 dark:text-amber-300">{totalInv.toLocaleString("pt-BR")}</td>
-                                                    <td className="py-3 px-4 text-right border-r border-blue-900 text-emerald-700 dark:text-emerald-300">{formatCurrency(offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : totalVol)}</td>
-                                                    <td className="py-3 px-4 text-right text-slate-900 dark:text-white">100,00%</td>
+                                                    <td className="py-2 px-3 uppercase tracking-wider border-r border-blue-900">Total da Oferta / Colocação</td>
+                                                    <td className="py-2 px-3 text-right border-r border-blue-900 text-amber-700 dark:text-amber-300">{totalInv.toLocaleString("pt-BR")}</td>
+                                                    <td className="py-2 px-3 text-right border-r border-blue-900 text-emerald-700 dark:text-emerald-300">{formatCurrency(offer.Volume_Float && offer.Volume_Float > 0 ? offer.Volume_Float : totalVol)}</td>
+                                                    <td className="py-2 px-3 text-right text-slate-900 dark:text-white">100,00%</td>
                                                 </tr>
                                             </tfoot>
                                         </table>
@@ -752,7 +763,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                     })()}
 
                     {/* Institutional & Legal Metadata */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2.5 p-3 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
                         <div>
                             <span className="text-slate-500 dark:text-slate-400 block">ID Processo / Requerimento</span>
                             <span className="font-mono text-slate-600 dark:text-slate-300 font-semibold mt-0.5 block">{offer.Id_Processo}</span>
@@ -807,7 +818,7 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
 
                 {/* Drawer Footer */}
                 <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs text-slate-500 dark:text-slate-400">
-                    <div className="pt-8 text-center text-xs text-slate-400 dark:text-slate-500 font-mono">
+                    <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">
                         Navegue com setas <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">Shift</kbd> + <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">&uarr;</kbd> <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">&darr;</kbd> ou feche com <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">Esc</kbd>
                     </div>
                     <button 
@@ -1578,8 +1589,8 @@ const App = () => {
                                             </th>
                                             <th className="px-2 py-3 w-[12%]">Ativo / Tipo</th>
                                             <th className="px-2 py-3 w-[10%]">Indexador</th>
-                                            <th className="px-2 py-3 w-[15%]">Remuneração<br/><span className="text-[9px]">(Spread/Juros)</span></th>
-                                            <th className="px-2 py-3 w-[10%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Status")}>
+                                            <th className="px-2 py-3 w-[13%]">Remuneração<br/><span className="text-[9px]">(Spread/Juros)</span></th>
+                                            <th className="px-2 pr-4 py-3 w-[12%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Status")}>
                                                 Status CVM {sortBy === "Status" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="px-2 py-3 w-[10%] text-right cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Volume_Float")}>
@@ -1630,8 +1641,8 @@ const App = () => {
                                                             </span>
                                                         )}
                                                     </td>
-                                                    <td className="px-2 py-3 whitespace-nowrap">
-                                                        <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-medium border ${
+                                                    <td className="px-2 pr-4 py-3 overflow-hidden">
+                                                        <span className={`inline-block max-w-full truncate align-middle px-2 py-0.5 rounded text-[10px] font-mono font-medium border ${
                                                             r.Status?.includes("Encerrada") || r.Status?.includes("Dispensada") || r.Status?.includes("Concedido") || r.Status?.includes("Confirmada")
                                                                 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"
                                                                 : r.Status?.includes("Análise") || r.Status?.includes("Exigência") || r.Status?.includes("Pendente")

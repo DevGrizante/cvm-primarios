@@ -389,7 +389,9 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
         if (!arr || !arr.length) return null;
         const s = [...arr].sort((a,b)=>a-b);
         const mid = Math.floor(s.length/2);
-        return s.length % 2 !== 0 ? s[mid] : (s[mid-1]+s[mid])/2;
+        const m = s.length % 2 !== 0 ? s[mid] : (s[mid-1]+s[mid])/2;
+        // arredonda na origem: (7,15+7,21)/2 vira 7.180000000000001 em IEEE-754
+        return Math.round(m * 100) / 100;
     };
     const allYears = Array.from(new Set([...Object.keys(spreadCdi), ...Object.keys(spreadIpca)])).sort();
     

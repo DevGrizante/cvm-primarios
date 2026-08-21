@@ -1,0 +1,64 @@
+# =============================================================================
+#  .dockerignore -- CVM Monitor PRO
+#  Fica na RAIZ porque a raiz e o contexto de build das duas imagens (api e
+#  web). O ganho aqui e grande: backend/data_cache sozinho tem ~30 MB
+#  (sre_enrichment_cache.json com 23 MB + o zip da CVM com 5,5 MB) e
+#  secondary_market.json tem 2,3 MB.
+# =============================================================================
+
+# --- Caches de dados (baixados/gerados em runtime) ---------------------------
+# No compose isso vira volume nomeado: o container baixa uma vez e reaproveita
+# entre restarts, sem inflar a imagem.
+backend/data_cache/
+backend/*.db
+backend/*.sqlite
+
+# secondary_market.json e gerado pelo anbima_matcher.py. Se voce PRECISA dele
+# dentro da imagem (o data_engine le no boot e degrada sem erro se faltar),
+# comente a linha abaixo.
+backend/secondary_market.json
+
+# --- Node / build do frontend ------------------------------------------------
+# node_modules e reinstalado dentro do estagio de build a partir do lockfile;
+# copiar o da maquina local quebraria binarios nativos e pesaria centenas de MB.
+node_modules/
+**/node_modules/
+frontend/dist/
+scratch_npm/
+
+# --- Python ------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Segredos ----------------------------------------------------------------
+.env
+.env.docker
+!.env.example
+!.env.docker.example
+
+# --- Git, docs e utilitarios -------------------------------------------------
+.git/
+.gitignore
+.github/
+.claude/
+*.md
+Iniciar_CVM_Monitor.bat
+PASTAS_PRONTAS_PARA_O_GITHUB/
+
+# --- Diversos ----------------------------------------------------------------
+*.log
+*.zip
+*.tmp
+*.temp
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Artefatos Docker --------------------------------------------------------
+docker-compose*.yml
+**/Dockerfile
+.dockerignore

@@ -69,6 +69,9 @@ const formatNumber = (val) => {
 
 const VENC_INVALIDO = new Set(["", "-", "--", "N/I", "N/A", "00/00/0000", "Não Informado", "0"]);
 
+// Gutter lateral unico: <main> e o overlay do dossie derivam daqui, entao alinham por construcao.
+const GUTTER_X = "px-4 md:px-[100px]";
+
 // Normaliza qualquer formato de vencimento vindo da CVM para MM/AA.
 const toMesAno = (raw) => {
     const v = String(raw ?? "").trim();
@@ -373,22 +376,35 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
     const [liveOffer, setLiveOffer] = useState(initialOffer);
     const [loadingApi, setLoadingApi] = useState(false);
 
+    // Guarda o ultimo Id ja consultado. Sem isto o ciclo e:
+    // fetch -> onUpdateOffer -> setSelectedOffer(objeto novo) -> nova identidade de
+    // initialOffer -> efeito redispara -> fetch... indefinidamente, sempre que a API
+    // nao devolve Taxa_Declarada (caso de FII/FIDC).
+    const idConsultadoRef = useRef(null);
+
     useEffect(() => {
+        const id = initialOffer?.Id_Processo;
         setLiveOffer(initialOffer);
-        if (initialOffer && initialOffer.Id_Processo && (!initialOffer.Caracteristicas_CVM || !initialOffer.Taxa_Declarada)) {
-            setLoadingApi(true);
-            fetch(API_BASE + '/offers/' + encodeURIComponent(initialOffer.Id_Processo))
-                .then(res => res.json())
-                .then(data => {
-                    setLoadingApi(false);
-                    if (data && !data.detail) {
-                        setLiveOffer(data);
-                        if (onUpdateOffer) onUpdateOffer(data);
-                    }
-                })
-                .catch(() => setLoadingApi(false));
-        }
-    }, [initialOffer]);
+        if (!id) return;
+        if (idConsultadoRef.current === id) return;
+        if (initialOffer.Caracteristicas_CVM && initialOffer.Taxa_Declarada) return;
+        idConsultadoRef.current = id;
+
+        let cancelado = false;
+        setLoadingApi(true);
+        fetch(API_BASE + '/offers/' + encodeURIComponent(id))
+            .then(res => res.json())
+            .then(data => {
+                if (cancelado) return;
+                setLoadingApi(false);
+                if (data && !data.detail) {
+                    setLiveOffer(data);
+                    if (onUpdateOffer) onUpdateOffer(data);
+                }
+            })
+            .catch(() => { if (!cancelado) setLoadingApi(false); });
+        return () => { cancelado = true; };
+    }, [initialOffer?.Id_Processo]);
 
     const offer = liveOffer;
 
@@ -406,8 +422,8 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
     const isBookbuilding = (offer.Status?.toUpperCase().includes("ANDAMENTO") || offer.Status?.toUpperCase().includes("ANÁLISE INICIAL") || offer.Status?.toUpperCase().includes("AGUARDANDO BOOKBUILDING")) || offer.Alocacao_Pendente;
 
     return (
-        <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end transition-opacity duration-300">
-            <div className="w-full md:w-[700px] bg-white dark:bg-cvm-card border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col h-full drawer-slide-in">
+        <div className={`fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-center ${GUTTER_X} transition-opacity duration-300`}>
+            <div className="w-full bg-white dark:bg-cvm-card md:border-x border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col h-full drawer-slide-in">
                 {/* Drawer Header */}
                 <div className="p-5 glass-header flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
                     <div className="flex items-center space-x-3">
@@ -1350,7 +1366,7 @@ const App = () => {
             </div>
 
             {/* Main Content Area */}
-            <main className="flex-1 max-w-full w-full mx-auto px-4 py-6 space-y-6">
+            <main className={`flex-1 max-w-full w-full mx-auto ${GUTTER_X} py-6 space-y-6`}>
                 {/* 4 Dedicated Credit Desk KPIs Row */}
                 {kpis && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1833,7 +1849,7 @@ const App = () => {
                                             y: {
                                                 title: { display: true, text: "Spread (% a.a.)", color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono", size: 11 } },
                                                 grid: { color: isDarkMode ? "#1E293B" : "#475569" },
-                                                ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `${v}%` }
+                                                ticks: { color: isDarkMode ? "#94A3B8" : "#475569", font: { family: "JetBrains Mono" }, callback: v => `${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%` }
                                             }
                                         },
                                         plugins: {

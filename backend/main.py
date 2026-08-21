@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, FileResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Union
 from collections import defaultdict
@@ -10,7 +10,6 @@ import os
 import sys
 import requests
 import re
-from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 _CUR_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -312,7 +311,7 @@ def get_dashboard(
         return cached
 
     ano_val = _val(ano); rito_val = _val(rito); ativo_val = _val(ativo); status_val = _val(status)
-    indexador_val = _val(indexador); publico_val = _val(publico); regime_val = _val(regime); volume_min_val = _val(volume_min); busca_val = _val(busca)
+    indexador_val = _val(indexador); publico_val = _val(publico); regime_val = _val(regime); busca_val = _val(busca)
     data_de_val = _val(data_de); data_ate_val = _val(data_ate)
     
     rows = engine.get_filtered_rows(ano_val, rito_val, ativo_val, status_val, indexador_val, publico_val, regime_val, busca_val, data_de_val, data_ate_val)

@@ -1,0 +1,92 @@
+# =============================================================================
+#  CVM Monitor PRO - stack local
+#
+#  Sobe a API (FastAPI) e o painel React (nginx). O MySQL vive em
+#  ../infra/docker-compose.yml e atende os dois projetos -- suba aquele antes.
+#
+#      cd ../infra && docker compose up -d      # 1) banco
+#      cd ../cvm-monitor-pro && docker compose up -d --build   # 2) este
+#
+#  Painel:  http://localhost:8080
+#  API:     http://localhost:8082/docs
+# =============================================================================
+
+name: cvm-monitor-pro
+
+services:
+  # ---------------------------------------------------------------------------
+  # api -- FastAPI + Uvicorn
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      # Contexto na raiz para o Dockerfile poder copiar backend/ inteiro.
+      context: .
+      dockerfile: backend/Dockerfile
+    image: cvm-monitor-api:local
+    container_name: cvm-api
+    restart: unless-stopped
+
+    environment:
+      TZ: America/Sao_Paulo
+
+      # A variavel RENDER, quando presente, faz o main.py desligar /docs.
+      # Vazia aqui: em desenvolvimento a documentacao interativa e util.
+      RENDER: ""
+
+      # --- MySQL (infra compartilhada) -------------------------------------
+      # Prontas para a migracao da persistencia. Host = nome do servico na
+      # rede bgc-net.
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: cvm_monitor
+      DB_USER: cvm_app
+      DB_PASSWORD: cvm_dev_2026
+      DATABASE_URL: "mysql+pymysql://cvm_app:cvm_dev_2026@mysql:3306/cvm_monitor?charset=utf8mb4"
+
+    volumes:
+      # Volume NOMEADO (nao bind mount): o cache e artefato gerado, nao fonte.
+      # Assim ele nao polui a arvore do repositorio e o `down -v` limpa tudo
+      # de uma vez quando se quer forcar o redownload do zip da CVM.
+      - cvm_data_cache:/app/backend/data_cache
+
+    ports:
+      # 8082 no host: a API do projeto Captacao-Resgate ja usa a 8000, e os
+      # dois stacks rodam juntos na mesma maquina.
+      - "${API_PORT:-8082}:8080"
+
+    networks:
+      - bgc-net
+
+  # ---------------------------------------------------------------------------
+  # web -- SPA React buildada, servida por nginx
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: cvm-monitor-web:local
+    container_name: cvm-web
+    restart: unless-stopped
+
+    ports:
+      # 8080 mantem a porta que o Iniciar_CVM_Monitor.bat ja usa.
+      - "${WEB_PORT:-8080}:80"
+
+    depends_on:
+      # O primeiro boot baixa e processa o zip da CVM; o front sobe antes e
+      # exibe o proprio estado de carregamento (o engine expoe boot_state em
+      # /api/status), que e melhor do que a tela nao abrir.
+      api:
+        condition: service_started
+
+    networks:
+      - bgc-net
+
+volumes:
+  cvm_data_cache:
+    name: cvm_data_cache
+
+networks:
+  bgc-net:
+    name: bgc-net
+    external: true

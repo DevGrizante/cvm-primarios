@@ -8,7 +8,7 @@ import ssl
 import time
 import json
 import threading
-from datetime import datetime, timedelta, date, time as dt_time, timezone
+from datetime import datetime, timedelta, time as dt_time, timezone
 import unicodedata
 from collections import defaultdict
 
@@ -35,7 +35,6 @@ class CVMDataEngine:
         }
         self.secondary_market = {}
         try:
-            import os, json
             sm_path = os.path.join(os.path.dirname(__file__), "secondary_market.json")
             if os.path.exists(sm_path):
                 with open(sm_path, "r", encoding="utf-8") as f:
@@ -98,7 +97,6 @@ class CVMDataEngine:
         Busca as ofertas dos últimos 15 dias direto da API D+0 da CVM.
         """
         import urllib.request
-        import json
         from datetime import datetime, timedelta
         
         hoje = datetime.today()
@@ -1229,9 +1227,7 @@ class CVMDataEngine:
 
         # Pass 2: Identificar ofertas com volume em bookbuilding e aplicar honestidade em taxas/alocações
         for r in unified:
-            em = r["Emissor"]
             at = r["Ativo"].upper()
-            at_key = r["Ativo"]
             idx = r["Indexador"]
             
             # 1. Volume alvo em ofertas em Bookbuilding ou com volume zerado na CVM
@@ -1358,7 +1354,6 @@ class CVMDataEngine:
         if os.path.exists(sre_cache_path):
             cached_sre = {}
             try:
-                import json
                 with open(sre_cache_path, "r", encoding="utf-8") as f:
                     cached_sre = json.load(f)
             except Exception as e:
@@ -1501,13 +1496,11 @@ class CVMDataEngine:
                             self._sync_row_indexador(r)
                 
                     
-                total_rows = max(len(self.rows), 1)
 
         consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
         self.consorcio_cache = {}
         if os.path.exists(consorcio_cache_path):
             try:
-                import json
                 with open(consorcio_cache_path, "r", encoding="utf-8") as f:
                     self.consorcio_cache = json.load(f)
             except Exception as e:
@@ -1563,7 +1556,6 @@ class CVMDataEngine:
         if not req_id:
             return
         try:
-            import json, os
             sre_cache_path = os.path.join(CACHE_DIR, "sre_enrichment_cache.json")
             cached = {}
             if os.path.exists(sre_cache_path):
@@ -1610,8 +1602,6 @@ class CVMDataEngine:
         self._worker_started = True
         
         def worker_loop():
-            import time
-            import json
             import urllib.request
             import ssl
             sre_cache_path = os.path.join(CACHE_DIR, "sre_enrichment_cache.json")
@@ -1655,9 +1645,6 @@ class CVMDataEngine:
                                 try: return float(str(v_str).replace(".", "").replace(",", "."))
                                 except Exception: return 0.0
 
-                            taxa_encontrada = None
-                            campos_encontrados = []
-                            venc_encontrado = None
                             series_data = []
                             
                             if data.get("grupos"):
@@ -2033,7 +2020,6 @@ class CVMDataEngine:
 
     def _build_columnar_dataset(self):
         import gzip
-        import json
         import hashlib
         
         cols = [

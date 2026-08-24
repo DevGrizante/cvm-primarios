@@ -526,9 +526,9 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 rounded-lg border border-slate-200 dark:border-slate-800 min-w-0">
                                 <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block">Remunera&ccedil;&atilde;o (Spread/Juros)</span>
                                 {isTaxaConfirmada ? (
-                                    <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 block truncate" title={offer.Taxa_Juros}>{offer.Taxa_Juros}</span>
+                                    <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400 block truncate tracking-tight" title={offer.Taxa_Juros}>{offer.Taxa_Juros}</span>
                                 ) : (
-                                    <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 flex items-center min-w-0" title={offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}>
+                                    <span className="text-sm font-bold font-mono text-amber-600 dark:text-amber-400 flex items-center min-w-0" title={offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}>
                                         <Icons.Clock className="w-3 h-3 mr-1 inline shrink-0" />
                                         <span className="truncate">{offer.Taxa_Juros || "Spread a Definir em Bookbuilding"}</span>
                                     </span>
@@ -540,6 +540,58 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             </div>
                         </div>
                     </div>
+
+                    {/* Coordenadores — bloco proprio, entre o Resumo e o Detalhamento das Series */}
+                    {(() => {
+                        const liderUpper = String(offer.Lider || "").toUpperCase().trim();
+                        const coordsRaw = Array.isArray(offer.Coordenadores_Todos)
+                            ? offer.Coordenadores_Todos
+                            : (offer.Coordenadores_Todos?.coordenadores || []);
+                        const nomeDe = (c) => (typeof c === "object" && c !== null ? (c.participante || c.nome || "") : String(c || ""));
+                        const demaisCoords = coordsRaw.map(nomeDe).filter(c => {
+                            const u = c.toUpperCase().trim();
+                            if (!liderUpper || !u) return false;
+                            return u !== liderUpper && !u.includes(liderUpper) && !liderUpper.includes(u);
+                        });
+                        if (!offer.Lider && demaisCoords.length === 0) return null;
+                        return (
+                            <div className="bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800/80 border-l-4 border-l-indigo-500 overflow-hidden">
+                                <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
+                                    <span className="text-sm font-bold text-indigo-700 dark:text-indigo-300 font-display uppercase tracking-wider flex items-center gap-2">
+                                        <Icons.Shield className="w-4 h-4" />
+                                        Coordenadores da Distribuição
+                                    </span>
+                                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                                        {(offer.Lider ? 1 : 0) + demaisCoords.length} instituição(ões)
+                                    </span>
+                                </div>
+                                <div className="p-4 space-y-3">
+                                    <div>
+                                        <span className="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block mb-1">Coordenador Líder</span>
+                                        <span className="text-xl md:text-2xl font-bold text-indigo-700 dark:text-indigo-300 font-display leading-tight block break-words" title={offer.Lider}>
+                                            {offer.Lider || "Não Informado"}
+                                        </span>
+                                    </div>
+                                    {demaisCoords.length > 0 && (
+                                        <div>
+                                            <span className="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono block mb-1.5">Demais Coordenadores do Consórcio</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {demaisCoords.map((c, i) => (
+                                                    <span
+                                                        key={i}
+                                                        title={c}
+                                                        className="text-sm font-semibold text-slate-700 dark:text-slate-100 bg-indigo-500/10 border border-indigo-500/30 px-3 py-1.5 rounded-lg"
+                                                    >
+                                                        {c}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* Características do Valor Mobiliário (API REST Oficial CVM) */}
                     {offer.Series && offer.Series.length > 0 ? (
@@ -593,9 +645,9 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                                     </div>
                                                 )}
                                                 {s.taxa && String(s.taxa).trim() && String(s.taxa).trim() !== "0" && (
-                                                    <div className="bg-slate-100 dark:bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700/40 col-span-2">
-                                                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
-                                                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-snug max-h-20 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
+                                                    <div className="bg-emerald-500/5 dark:bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/30 border-l-4 border-l-emerald-500 col-span-2">
+                                                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-mono uppercase tracking-wider block mb-1">Remuneração Específica</span>
+                                                        <p className="text-base font-bold text-emerald-700 dark:text-emerald-400 leading-snug max-h-24 overflow-y-auto custom-scrollbar pr-2">{s.taxa}</p>
                                                     </div>
                                                 )}
                                             </div>
@@ -773,35 +825,6 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                             <span className="font-mono text-slate-600 dark:text-slate-300 mt-0.5 block">{formatDate(offer.Data_Clean)}</span>
                         </div>
                         <div>
-                            <span className="text-slate-500 dark:text-slate-400 block">Coordenador / Consórcio</span>
-                            <span className="text-slate-600 dark:text-slate-300 font-medium mt-0.5 block truncate" title={offer.Consorcio || offer.Lider}>Líder: {offer.Lider}</span>
-                            {(() => {
-                                const liderUpper = String(offer.Lider || "").toUpperCase().trim();
-                                const coordsRaw = Array.isArray(offer.Coordenadores_Todos) ? offer.Coordenadores_Todos : (offer.Coordenadores_Todos?.coordenadores || []);
-                                const demaisCoords = coordsRaw.filter(c => {
-                                    const coordName = typeof c === 'object' && c !== null ? (c.participante || c.nome || "") : String(c || "");
-                                    const coordUpper = coordName.toUpperCase().trim();
-                                    if (!liderUpper || !coordUpper) return false;
-                                    return coordUpper !== liderUpper && !coordUpper.includes(liderUpper) && !liderUpper.includes(coordUpper);
-                                }).map(c => typeof c === 'object' && c !== null ? (c.participante || c.nome || "") : String(c || ""));
-                                
-                                if (demaisCoords.length === 0) return null;
-                                
-                                return (
-                                    <div className="mt-1 space-y-0.5">
-                                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono uppercase mb-1">Demais Coordenadores:</span>
-                                        <div className="overflow-x-auto pb-1.5 max-w-full whitespace-nowrap">
-                                            {demaisCoords.map((c, i) => (
-                                                <span key={i} className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono pr-2" title={c}>
-                                                    - {c}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                        <div>
                             <span className="text-slate-500 dark:text-slate-400 block">Processo SEI / Rito</span>
                             <span className="text-slate-600 dark:text-slate-300 mt-0.5 block">{offer.Processo_SEI || "Não informado"} ({offer.Rito})</span>
                         </div>
@@ -962,6 +985,8 @@ const App = () => {
                   obj.Id_Processo = obj.id;
                   obj.Numero_Requerimento = obj.id;
                   obj.Data_Clean = obj.data;
+                  obj.Data_Booking = obj.dt_booking;
+                  obj.Booking_Fonte = obj.dt_booking_fonte;
                   obj.Ano = obj.ano;
                   obj.Emissor = obj.emissor;
                   obj.Ativo = obj.setor_ativo;
@@ -1578,17 +1603,20 @@ const App = () => {
                             <OffersTableSkeleton />
                         ) : (
                             <div className="overflow-x-auto">
-                                <table className="w-full table-fixed text-left border-collapse data-grid text-xs min-w-[1100px]">
+                                <table className="w-full table-fixed text-left border-collapse data-grid text-xs min-w-[1240px]">
                                     <thead>
                                         <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-mono uppercase text-[11px] select-none">
-                                            <th className="px-2 py-3 w-[8%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Clean")}>
+                                            <th className="px-2 py-3 w-[7%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Clean")}>
                                                 Data {sortBy === "Data_Clean" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
-                                            <th className="px-2 py-3 w-[20%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Emissor")}>
+                                            <th className="px-2 py-3 w-[8%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Booking")} title="Data de booking pré-liquidação: Data de emissão declarada na CVM/SRE ou, na falta dela, o protocolo do requerimento (Aviso ao Mercado). Não depende de ticker nem da base ANBIMA.">
+                                                dt Booking {sortBy === "Data_Booking" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
+                                            </th>
+                                            <th className="px-2 py-3 w-[15%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Emissor")}>
                                                 Emissor / Ofertante {sortBy === "Emissor" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
-                                            <th className="px-2 py-3 w-[12%]">Ativo / Tipo</th>
-                                            <th className="px-2 py-3 w-[10%]">Indexador</th>
+                                            <th className="px-2 py-3 w-[11%]">Ativo / Tipo</th>
+                                            <th className="px-2 py-3 w-[9%]">Indexador</th>
                                             <th className="px-2 py-3 w-[13%]">Remuneração<br/><span className="text-[9px]">(Spread/Juros)</span></th>
                                             <th className="px-2 pr-4 py-3 w-[12%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Status")}>
                                                 Status CVM {sortBy === "Status" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
@@ -1609,6 +1637,29 @@ const App = () => {
                                                     onClick={() => setSelectedOffer(r)}
                                                     className={`cursor-pointer transition-colors ${isSelected ? "bg-indigo-600/15 border-l-4 border-l-indigo-500" : "hover:bg-slate-100 dark:hover:bg-slate-800/40"}`}>
                                                     <td className="px-2 py-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
+                                                    {/* ===== dt Booking: EXIBICAO PRE-LIQUIDACAO =====
+                                                        Renderiza sem depender de ticker nem da base ANBIMA.
+                                                        fonte "emissao" (EMI) = Data de emissao declarada na CVM/SRE;
+                                                        fonte "aviso"   (AVM) = protocolo do requerimento / Comunicado ao Mercado. */}
+                                                    <td className="px-2 py-3 font-mono whitespace-nowrap">
+                                                        {r.Data_Booking ? (
+                                                            <span className="inline-flex items-center gap-1">
+                                                                <span className="text-indigo-700 dark:text-indigo-300 font-semibold">{r.Data_Booking}</span>
+                                                                <span
+                                                                    className={`text-[9px] px-1 py-0.5 rounded border ${r.Booking_Fonte === "emissao"
+                                                                        ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/30"
+                                                                        : "bg-slate-500/10 text-slate-500 dark:text-slate-400 border-slate-400/30"}`}
+                                                                    title={r.Booking_Fonte === "emissao"
+                                                                        ? "Data de emissão declarada nos campos da CVM/SRE — disponível antes da liquidação"
+                                                                        : "Protocolo do requerimento / Comunicado ao Mercado — proxy do Aviso ao Mercado"}
+                                                                >
+                                                                    {r.Booking_Fonte === "emissao" ? "EMI" : "AVM"}
+                                                                </span>
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-400 dark:text-slate-600" title="Oferta sem data de emissão nem protocolo na base CVM">&mdash;</span>
+                                                        )}
+                                                    </td>
                                                     <td className="px-2 py-3 font-semibold text-slate-900 dark:text-white max-w-[200px] truncate" title={r.Emissor}>
                                                         {r.Emissor}
                                                         <span className="block text-xs font-semibold text-slate-600 dark:text-slate-300 font-mono mt-1 truncate" title={r.Consorcio || r.Lider}>Líder: {r.Lider}</span>
@@ -1634,7 +1685,7 @@ const App = () => {
                                                     </td>
                                                     <td className="px-2 py-3 max-w-[180px] whitespace-normal break-words">
                                                         {(r.Taxa_Declarada || r.Taxa_Juros?.includes("*(Hist. Emissor)*") || (r.Taxa_Juros && !r.Taxa_Juros.includes("a Definir") && !r.Taxa_Juros.includes("Não Informado"))) ? (
-                                                            <span className="text-emerald-600 dark:text-emerald-400 font-semibold" title={r.Taxa_Juros}>{formatTaxa(r.Taxa_Juros)}</span>
+                                                            <span className="text-emerald-600 dark:text-emerald-400 font-bold text-[13px] tracking-tight" title={r.Taxa_Juros}>{formatTaxa(r.Taxa_Juros)}</span>
                                                         ) : (
                                                             <span className="text-amber-600 dark:text-amber-400 text-[11px] font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 inline-flex items-center" title={r.Taxa_Juros || "Spread a Definir (Bookbuilding)"}>
                                                                 <Icons.Clock className="w-3 h-3 inline mr-1 shrink-0" /> {formatTaxa(r.Taxa_Juros?.replace(" (Bookbuilding)", "")) || "Alvo (Bookbuilding)"}

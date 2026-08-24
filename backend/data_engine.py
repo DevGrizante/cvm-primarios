@@ -78,7 +78,33 @@ _FAMILIA_POR_ROTULO = {
     "PR\u00c9 (Prefixado)": "PR\u00c9",
 }
 
-SCHEMA_VERSION = 12
+def _data_emissao_de_campos(campos):
+    """Le "Data de emissao" de camposCadastrados (SRE/CVM) -> "DD/MM/AAAA" ou "".
+
+    Fonte PRE-LIQUIDACAO: existe assim que a oferta e cadastrada na CVM, muito
+    antes de o ativo receber ticker e entrar na base ANBIMA.
+    """
+    if not isinstance(campos, list):
+        return ""
+    for c in campos:
+        if not isinstance(c, dict):
+            continue
+        if str(c.get("campoNome", "")).strip().lower() in ("data de emiss\u00e3o", "data de emissao"):
+            val = str(c.get("campoValor", "")).strip()
+            if val and val not in ("-", "--", "00/00/0000", "N/A", "N/I", "N\u00e3o Informado"):
+                return val
+    return ""
+
+
+def _iso_para_br(d):
+    """AAAA-MM-DD -> DD/MM/AAAA (formato de exibicao da mesa)."""
+    d = str(d or "").strip()[:10]
+    if len(d) == 10 and d[4] == "-":
+        return f"{d[8:10]}/{d[5:7]}/{d[0:4]}"
+    return ""
+
+
+SCHEMA_VERSION = 14
 
 class CVMDataEngine:
     def __init__(self):
@@ -1126,6 +1152,8 @@ class CVMDataEngine:
                         "Id_Processo": r.get("Numero_Processo") or r.get("Numero_Requerimento") or "N/A",
                         "Numero_Requerimento": r.get("Numero_Requerimento", "N/A"),
                         "Regime": "Resolução 160 (Moderno)",
+                        # Protocolo do requerimento: proxy do Aviso ao Mercado (pre-liquidacao).
+                        "Data_Protocolo_Oferta": (r.get("Data_requerimento") or "")[:10],
                         "Ano": ano,
                         "Data_Clean": data_clean,
                         "Rito": self._clean_text(r.get("Rito_Requerimento")),
@@ -1219,6 +1247,9 @@ class CVMDataEngine:
                         "Id_Processo": r.get("Numero_Processo") or "N/A",
                         "Numero_Requerimento": r.get("Numero_Registro_Oferta", "N/A"),
                         "Regime": "ICVM 400/476 (Histórico)",
+                        # Data_Comunicado = Comunicado/Aviso ao Mercado (so bases legadas);
+                        # Data_Protocolo cobre o periodo recente.
+                        "Data_Protocolo_Oferta": (r.get("Data_Comunicado") or r.get("Data_Protocolo") or r.get("Data_Inicio_Oferta") or "")[:10],
                         "Ano": ano,
                         "Data_Clean": data_clean,
                         "Rito": "Ordinário (ICVM 400/476)",
@@ -2093,7 +2124,7 @@ class CVMDataEngine:
         import hashlib
         
         cols = [
-            'id', 'data', 'ano', 'emissor', 'setor_ativo', 'indexador', 
+            'id', 'data', 'dt_booking', 'dt_booking_fonte', 'ano', 'emissor', 'setor_ativo', 'indexador', 
             'taxa', 'volume', 'estimado', 'lider', 'status', 'rito', 
             'regime', 'publico', 'ntnb', 'ntnb_fonte', 'vencimento', 
             'esg', 'vol_pf', 'vol_fd', 'vol_est', 'vol_prev', 'vol_seg', 
@@ -2181,6 +2212,33 @@ class CVMDataEngine:
                         if mapping.get("isin"):
                             s_data["isin"] = mapping.get("isin")
 
+            # ================= REGRA DE NEGOCIO: dt Booking =====================
+            # A data de booking NAO e a data de inicio de rentabilidade: por isso a
+            # "Data da Rentabilidade" da ANBIMA NAO e usada aqui em hipotese alguma.
+            # A cadeia abaixo so consome fontes PRE-LIQUIDACAO, disponiveis antes de
+            # o ativo receber ticker e passar a existir na base ANBIMA:
+            #   1) "Data de emissao" declarada nos campos da CVM/SRE  -> fonte "emissao"
+            #   2) protocolo do requerimento / Comunicado ao Mercado  -> fonte "aviso"
+            # Quando nenhuma existe, o campo fica vazio (a UI mostra "--").
+            _dt_book, _dt_fonte = "", ""
+            _emissoes = [d for d in (_data_emissao_de_campos(_s.get("campos")) for _s in series_list) if d]
+            if not _emissoes:
+                _um = _data_emissao_de_campos(r.get("Caracteristicas_CVM"))
+                if _um:
+                    _emissoes = [_um]
+            if _emissoes:
+                def _ord_br(x):
+                    pt = x.split("/")
+                    return (pt[2], pt[1], pt[0]) if len(pt) == 3 else ("9999", "99", "99")
+                _dt_book, _dt_fonte = min(_emissoes, key=_ord_br), "emissao"
+            else:
+                _av = _iso_para_br(r.get("Data_Protocolo_Oferta"))
+                if _av:
+                    _dt_book, _dt_fonte = _av, "aviso"
+            r["Data_Booking"] = _dt_book
+            r["Booking_Fonte"] = _dt_fonte
+            # ===================================================================
+
             # Rotulo curto do indexador de cada serie. Recalculado AQUI, e nao no
             # fetch, por dois motivos: corrige entradas antigas do cache SRE sem
             # precisar rebuscar a API, e roda depois do merge Anbima, que pode
@@ -2195,7 +2253,7 @@ class CVMDataEngine:
             # Optimize nulls/empty strings to None or empty to save bytes
             r_id = r.get('Numero_Requerimento') or r.get('Id_Processo') or ''
             rows_colunares.append([
-                r_id, r.get('Data_Clean', ''), r.get('Ano', ''), r.get('Emissor', ''), r.get('Ativo', ''),
+                r_id, r.get('Data_Clean', ''), r.get('Data_Booking', ''), r.get('Booking_Fonte', ''), r.get('Ano', ''), r.get('Emissor', ''), r.get('Ativo', ''),
                 r.get('Indexador', ''), r.get('Taxa_Juros', ''), r.get('Volume_Float', 0.0), bool(r.get('Is_Estimated_Vol', False)),
                 r.get('Lider', ''), r.get('Status', ''), r.get('Rito', ''), r.get('Regime', ''), r.get('Publico_Alvo', ''),
                 r.get('Referencia_NTNB', ''), r.get('NTNB_Fonte', ''), r.get('Vencimento', ''), r.get('ESG', 'Nao'),

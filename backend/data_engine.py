@@ -104,7 +104,109 @@ def _iso_para_br(d):
     return ""
 
 
-SCHEMA_VERSION = 14
+# ===================== dt Booking: cronograma da oferta =====================
+# Regra de negocio: a data de booking e a data do evento "Concessao do Registro
+# Automatico da Oferta pela CVM / Divulgacao do Anuncio de Inicio" -- o momento
+# em que o book e fechado. Duas fontes, nesta ordem:
+#
+#   REG  Oferta ja registrada -> Data_Registro do CSV da CVM (custo zero).
+#   AVM  Oferta ainda em bookbuilding -> data PREVISTA no cronograma do PDF do
+#        "Aviso ao Mercado", unica fonte pre-liquidacao que existe. Exige baixar
+#        e parsear o PDF, mas atinge poucas dezenas de ofertas por vez.
+#
+# Requerimentos que expiraram/foram arquivados sem registro NAO recebem data: o
+# cronograma traz uma previsao que nunca se concretizou, exibi-la enganaria a mesa.
+SRE_REST = "https://web.cvm.gov.br/sre-publico-cvm/rest"
+STATUS_SEM_BOOKING = ("EXPIRAD", "CANCELAD", "INDEFERID", "DESIST", "ARQUIVAD")
+
+MESES_PT = {
+    "janeiro": "01", "fevereiro": "02", "marco": "03", "mar\u00e7o": "03",
+    "abril": "04", "maio": "05", "junho": "06", "julho": "07",
+    "agosto": "08", "setembro": "09", "outubro": "10",
+    "novembro": "11", "dezembro": "12",
+}
+_RE_DATA_EXTENSO = re.compile(
+    r"(\d{1,2})\s*(?:de\s+)?(" + "|".join(MESES_PT) + r")\s*(?:de\s+)?(\d{4})", re.IGNORECASE)
+_RE_DATA_NUM = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
+
+
+def _datas_no_trecho(txt):
+    """Datas de um trecho normalizadas p/ DD/MM/AAAA, na ordem em que aparecem.
+
+    Aceita os dois layouts vistos em producao: "26 de agosto de 2026" (coluna)
+    e "21/08/2026" (tabela).
+    """
+    achados = []
+    for m in _RE_DATA_NUM.finditer(txt):
+        achados.append((m.start(), "%s/%s/%s" % (m.group(1), m.group(2), m.group(3))))
+    for m in _RE_DATA_EXTENSO.finditer(txt):
+        achados.append((m.start(), "%02d/%s/%s" % (int(m.group(1)), MESES_PT[m.group(2).lower()], m.group(3))))
+    achados.sort()
+    return [d for _, d in achados]
+
+
+def _data_cronograma_anuncio_inicio(pdf_bytes):
+    """Le o cronograma do Aviso ao Mercado e devolve a data do evento 2."""
+    try:
+        import pdfplumber
+    except ImportError:
+        return ""
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            txt = "\n".join((pg.extract_text() or "") for pg in pdf.pages)
+    except Exception:
+        return ""
+    plano = re.sub(r"\s+", " ", txt)
+    for ancora in (r"Concess[a\u00e3]o do Registro Autom[a\u00e1]tico",
+                   r"Obten[c\u00e7][a\u00e3]o do registro autom[a\u00e1]tico",
+                   r"registro autom[a\u00e1]tico da Oferta"):
+        for m in re.finditer(ancora, plano, re.IGNORECASE):
+            # A data vem DEPOIS do texto do evento nos dois layouts. Olhar para
+            # tras primeiro capturaria a data do evento 1, que precede a ancora.
+            datas = _datas_no_trecho(plano[m.end():m.end() + 220])
+            if datas:
+                return datas[0]
+            datas = _datas_no_trecho(plano[max(0, m.start() - 120):m.start()])
+            if datas:
+                return datas[-1]
+    return ""
+
+
+def _buscar_booking_no_aviso(req_id, ctx, timeout=8.0):
+    """(data, fonte) a partir dos documentos publicados da oferta na CVM."""
+    try:
+        url = SRE_REST + "/sitePublico/pesquisar/documentosPublicados/" + str(req_id)
+        rq = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(rq, context=ctx, timeout=timeout) as resp:
+            docs = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return "", ""
+    if not isinstance(docs, list):
+        return "", ""
+
+    # Anuncio de Inicio ja publicado: a data dele e o proprio evento 2.
+    for d in docs:
+        nome = str(d.get("nome", ""))
+        if "nicio" in nome and "n\u00fancio" in nome.lower().replace("anuncio", "n\u00fancio"):
+            if str(d.get("data", "")).strip():
+                return str(d["data"]).strip(), "ANI"
+
+    # Caso contrario, extrai a data prevista do cronograma do Aviso ao Mercado.
+    for d in docs:
+        if "aviso ao mercado" in str(d.get("nome", "")).lower() and d.get("valor"):
+            try:
+                url = SRE_REST + "/download/" + str(d["valor"])
+                rq = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(rq, context=ctx, timeout=timeout * 3) as resp:
+                    pdf = resp.read()
+            except Exception:
+                return "", ""
+            dt = _data_cronograma_anuncio_inicio(pdf)
+            return (dt, "AVM") if dt else ("", "")
+    return "", ""
+
+
+SCHEMA_VERSION = 15
 
 class CVMDataEngine:
     def __init__(self):
@@ -120,6 +222,7 @@ class CVMDataEngine:
             "pronto": False
         }
         self.secondary_market = {}
+        self.booking_cache = {}   # {req_id: {"data": "DD/MM/AAAA", "fonte": "AVM"|"ANI"}}
         try:
             sm_path = os.path.join(os.path.dirname(__file__), "secondary_market.json")
             if os.path.exists(sm_path):
@@ -1152,8 +1255,10 @@ class CVMDataEngine:
                         "Id_Processo": r.get("Numero_Processo") or r.get("Numero_Requerimento") or "N/A",
                         "Numero_Requerimento": r.get("Numero_Requerimento", "N/A"),
                         "Regime": "Resolução 160 (Moderno)",
-                        # Protocolo do requerimento: proxy do Aviso ao Mercado (pre-liquidacao).
+                        # Protocolo do requerimento (evento 1 do cronograma).
                         "Data_Protocolo_Oferta": (r.get("Data_requerimento") or "")[:10],
+                        # Concessao do registro (evento 2) = data de booking quando existe.
+                        "Data_Registro_CVM": (r.get("Data_Registro") or "")[:10],
                         "Ano": ano,
                         "Data_Clean": data_clean,
                         "Rito": self._clean_text(r.get("Rito_Requerimento")),
@@ -1250,6 +1355,7 @@ class CVMDataEngine:
                         # Data_Comunicado = Comunicado/Aviso ao Mercado (so bases legadas);
                         # Data_Protocolo cobre o periodo recente.
                         "Data_Protocolo_Oferta": (r.get("Data_Comunicado") or r.get("Data_Protocolo") or r.get("Data_Inicio_Oferta") or "")[:10],
+                        "Data_Registro_CVM": (r.get("Data_Registro_Oferta") or "")[:10],
                         "Ano": ano,
                         "Data_Clean": data_clean,
                         "Rito": "Ordinário (ICVM 400/476)",
@@ -1601,6 +1707,16 @@ class CVMDataEngine:
                 
                     
 
+        # Cache das datas de booking obtidas do PDF do Aviso ao Mercado.
+        booking_cache_path = os.path.join(CACHE_DIR, "booking_cache.json")
+        self.booking_cache = {}
+        if os.path.exists(booking_cache_path):
+            try:
+                with open(booking_cache_path, "r", encoding="utf-8") as f:
+                    self.booking_cache = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] booking_cache load: {e}")
+
         consorcio_cache_path = os.path.join(CACHE_DIR, "consorcio_cache.json")
         self.consorcio_cache = {}
         if os.path.exists(consorcio_cache_path):
@@ -1628,6 +1744,7 @@ class CVMDataEngine:
             mtime = os.path.getmtime(zip_filepath) if (zip_filepath and os.path.exists(str(zip_filepath))) else datetime.now().timestamp()
             self.last_update = datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M:%S") + " (CVM Oficial)"
         self._build_options_cache()
+        self._start_booking_worker()
         self._start_sre_background_worker()
         print(f"Data engine loaded {len(self.rows)} offerings successfully.")
         self._log_top_coordenadores()
@@ -1698,6 +1815,57 @@ class CVMDataEngine:
                 
         except Exception:
             pass
+
+    def _start_booking_worker(self):
+        """Resolve a data de booking das ofertas ainda SEM registro concedido.
+
+        Universo pequeno (dezenas): quem ja tem Data_Registro usa a fonte REG,
+        de custo zero. Aqui so entram os requerimentos vivos sem registro, para
+        os quais a unica fonte da data prevista e o cronograma dentro do PDF do
+        Aviso ao Mercado. Expirados/arquivados ficam de fora de proposito.
+        """
+        import threading
+
+        def worker():
+            try:
+                time.sleep(8)   # deixa o boot terminar antes de sair buscando
+                ctx = ssl.create_default_context()
+                alvos = []
+                for r in self.rows:
+                    if str(r.get("Data_Registro_CVM") or "").strip():
+                        continue
+                    st = str(r.get("Status") or "").upper()
+                    if any(k in st for k in STATUS_SEM_BOOKING):
+                        continue
+                    rid = str(r.get("Numero_Requerimento") or "").strip()
+                    if not rid.isdigit() or rid in self.booking_cache:
+                        continue
+                    alvos.append(rid)
+                if not alvos:
+                    return
+                print(f"[BOOKING] {len(alvos)} ofertas sem registro; lendo cronograma do Aviso ao Mercado...")
+                novos = 0
+                for rid in alvos:
+                    data, fonte = _buscar_booking_no_aviso(rid, ctx)
+                    self.booking_cache[rid] = {"data": data, "fonte": fonte}
+                    if data:
+                        novos += 1
+                    time.sleep(0.4)   # educado com o servidor da CVM
+                try:
+                    cache_path = os.path.join(CACHE_DIR, "booking_cache.json")
+                    tmp = cache_path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(self.booking_cache, f, ensure_ascii=False)
+                    os.replace(tmp, cache_path)
+                except Exception:
+                    pass
+                print(f"[BOOKING] {novos}/{len(alvos)} datas resolvidas; reconstruindo dataset.")
+                if novos:
+                    self._build_columnar_dataset()
+            except Exception as e:
+                print(f"[BOOKING] worker falhou: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _start_sre_background_worker(self):
         import threading
@@ -2213,30 +2381,24 @@ class CVMDataEngine:
                             s_data["isin"] = mapping.get("isin")
 
             # ================= REGRA DE NEGOCIO: dt Booking =====================
-            # A data de booking NAO e a data de inicio de rentabilidade: por isso a
-            # "Data da Rentabilidade" da ANBIMA NAO e usada aqui em hipotese alguma.
-            # A cadeia abaixo so consome fontes PRE-LIQUIDACAO, disponiveis antes de
-            # o ativo receber ticker e passar a existir na base ANBIMA:
-            #   1) "Data de emissao" declarada nos campos da CVM/SRE  -> fonte "emissao"
-            #   2) protocolo do requerimento / Comunicado ao Mercado  -> fonte "aviso"
-            # Quando nenhuma existe, o campo fica vazio (a UI mostra "--").
-            _dt_book, _dt_fonte = "", ""
-            _emissoes = [d for d in (_data_emissao_de_campos(_s.get("campos")) for _s in series_list) if d]
-            if not _emissoes:
-                _um = _data_emissao_de_campos(r.get("Caracteristicas_CVM"))
-                if _um:
-                    _emissoes = [_um]
-            if _emissoes:
-                def _ord_br(x):
-                    pt = x.split("/")
-                    return (pt[2], pt[1], pt[0]) if len(pt) == 3 else ("9999", "99", "99")
-                _dt_book, _dt_fonte = min(_emissoes, key=_ord_br), "emissao"
+            # Booking = evento "Concessao do Registro Automatico / Divulgacao do
+            # Anuncio de Inicio" do cronograma da oferta. NAO e a data de inicio
+            # de rentabilidade (por isso a ANBIMA nao entra aqui) nem a data de
+            # emissao/liquidacao (evento 3 do cronograma).
+            #
+            #   REG  registro ja concedido -> Data_Registro do CSV, custo zero.
+            #   AVM/ANI  ainda em bookbuilding -> data prevista no cronograma do
+            #        PDF do Aviso ao Mercado, preenchida pelo worker em background.
+            #
+            # Sem nenhuma das duas (inclusive requerimentos expirados/arquivados),
+            # fica vazio de proposito: a UI mostra "--" em vez de um palpite.
+            _reg = _iso_para_br(r.get("Data_Registro_CVM"))
+            if _reg:
+                r["Data_Booking"], r["Booking_Fonte"] = _reg, "REG"
             else:
-                _av = _iso_para_br(r.get("Data_Protocolo_Oferta"))
-                if _av:
-                    _dt_book, _dt_fonte = _av, "aviso"
-            r["Data_Booking"] = _dt_book
-            r["Booking_Fonte"] = _dt_fonte
+                _c = self.booking_cache.get(str(r.get("Numero_Requerimento") or "").strip()) or {}
+                r["Data_Booking"] = _c.get("data") or ""
+                r["Booking_Fonte"] = _c.get("fonte") or ""
             # ===================================================================
 
             # Rotulo curto do indexador de cada serie. Recalculado AQUI, e nao no

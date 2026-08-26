@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { filtrar, calcularKpis, calcularChartsOverview, calcularInvestors, calcularRankings, exportToCsv } from './dataEngine';
+import { filtrar, calcularKpis, calcularChartsOverview, calcularInvestors, calcularRankings, exportToCsv, ytdCorte, dentroYTD } from './dataEngine';
 import {
     Chart,
     CategoryScale,
@@ -426,12 +426,12 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
         <div className={`fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-center ${GUTTER_X} transition-opacity duration-300`}>
             <div className="w-full bg-white dark:bg-cvm-card md:border-x border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col h-full drawer-slide-in">
                 {/* Drawer Header */}
-                <div className="p-5 glass-header flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center space-x-3">
-                        <span className="p-2 bg-indigo-500/10 rounded-lg text-indigo-600 dark:text-indigo-400">
+                <div className="p-5 glass-header flex items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center space-x-3 min-w-0 flex-1">
+                        <span className="p-2 bg-indigo-500/10 rounded-lg text-indigo-600 dark:text-indigo-400 shrink-0">
                             <Icons.FileText />
                         </span>
-                        <div>
+                        <div className="min-w-0">
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-mono text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Dossiê de Auditoria Executiva</span>
                                 {loadingApi && (
@@ -440,12 +440,12 @@ const DrawerLateralDossie = ({ offer: initialOffer, onClose, onNavigate, totalIt
                                     </span>
                                 )}
                             </div>
-                            <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display truncate max-w-[360px]" title={offer.Emissor}>{offer.Emissor}</h3>
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display leading-snug break-words" title={offer.Emissor}>{offer.Emissor}</h3>
                         </div>
                     </div>
                     
                     {/* Navigation Buttons Cima / Baixo & Esc */}
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2 shrink-0">
                         <button 
                             onClick={() => onNavigate("prev")} 
                             disabled={currentIndex <= 0}
@@ -929,11 +929,21 @@ const App = () => {
             [yoyYear3]: { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 }
         };
         
+        // Corte YTD: iguala a janela dos 3 anos comparados em 01/01..hoje.
+        // Sem isso, o ano corrente (parcial) aparece menor que os anteriores
+        // (completos) por puro artefato de calendario, nao por queda de emissao.
+        const corteYTD = ytdCorte();
+
         finalRows.forEach(r => {
             const r_ano = String(r.ano || "").trim();
             const r_dt = (r.data || "").substring(0, 4);
             const y = (r_dt && r_dt.length === 4) ? r_dt : r_ano;
-            
+
+            // So aplica o corte quando ha data completa "AAAA-MM-DD"; sem o dia
+            // nao da para cortar com seguranca, entao a linha e mantida.
+            const temDataCompleta = String(r.data || "").length >= 10;
+            if (temDataCompleta && !dentroYTD(r.data, corteYTD)) return;
+
             if (vols[y]) {
                 const v = r.volume || 0;
                 const idx = (r.indexador || "").toLowerCase();
@@ -1133,6 +1143,22 @@ const App = () => {
         else if (sortBy === "Data_Clean") sorted.sort((a,b) => reverse ? String(b.data || "").localeCompare(a.data || "") : String(a.data || "").localeCompare(b.data || ""));
         else if (sortBy === "Emissor") sorted.sort((a,b) => reverse ? String(b.emissor || "").localeCompare(a.emissor || "") : String(a.emissor || "").localeCompare(b.emissor || ""));
         else if (sortBy === "Status") sorted.sort((a,b) => reverse ? String(b.status || "").localeCompare(a.status || "") : String(a.status || "").localeCompare(b.status || ""));
+        else if (sortBy === "Data_Booking") {
+            // dt_booking chega como "DD/MM/AAAA": comparar como string ordenaria
+            // pelo DIA. Converte para "AAAAMMDD", que ja ordena cronologicamente.
+            // Linhas sem data ("--") vao sempre para o fim, nos dois sentidos.
+            const chave = (r) => {
+                const p = String(r.dt_booking || "").split("/");
+                return p.length === 3 ? p[2] + p[1] + p[0] : "";
+            };
+            sorted.sort((a, b) => {
+                const ka = chave(a), kb = chave(b);
+                if (!ka && !kb) return 0;
+                if (!ka) return 1;
+                if (!kb) return -1;
+                return reverse ? kb.localeCompare(ka) : ka.localeCompare(kb);
+            });
+        }
 
         const total = sorted.length;
         const start = (currentPage - 1) * pageSize;
@@ -1609,7 +1635,7 @@ const App = () => {
                                             <th className="px-2 py-3 w-[7%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Clean")}>
                                                 Data {sortBy === "Data_Clean" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
-                                            <th className="px-2 py-3 w-[8%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Booking")} title="Data de booking pré-liquidação: Data de emissão declarada na CVM/SRE ou, na falta dela, o protocolo do requerimento (Aviso ao Mercado). Não depende de ticker nem da base ANBIMA.">
+                                            <th className="px-2 py-3 w-[8%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Data_Booking")} title="Data de booking: evento de concessão do registro automático / divulgação do Anúncio de Início. REG = registro já concedido (CVM). AVM = data prevista no cronograma do Aviso ao Mercado, para ofertas ainda em bookbuilding. Não depende de ticker nem da base ANBIMA.">
                                                 dt Booking {sortBy === "Data_Booking" && (sortOrder === "asc" ? "\u2191" : "\u2193")}
                                             </th>
                                             <th className="px-2 py-3 w-[15%] cursor-pointer hover:text-slate-900 dark:hover:text-white" onClick={() => handleSort("Emissor")}>
@@ -1637,27 +1663,30 @@ const App = () => {
                                                     onClick={() => setSelectedOffer(r)}
                                                     className={`cursor-pointer transition-colors ${isSelected ? "bg-indigo-600/15 border-l-4 border-l-indigo-500" : "hover:bg-slate-100 dark:hover:bg-slate-800/40"}`}>
                                                     <td className="px-2 py-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatDate(r.Data_Clean)}</td>
-                                                    {/* ===== dt Booking: EXIBICAO PRE-LIQUIDACAO =====
-                                                        Renderiza sem depender de ticker nem da base ANBIMA.
-                                                        fonte "emissao" (EMI) = Data de emissao declarada na CVM/SRE;
-                                                        fonte "aviso"   (AVM) = protocolo do requerimento / Comunicado ao Mercado. */}
+                                                    {/* ===== dt Booking =====
+                                                        Registro ja concedido (fonte REG): data confirmada, sem badge.
+                                                        Ainda em bookbuilding (AVM/ANI): data PREVISTA no cronograma do
+                                                        Aviso ao Mercado -- recebe o badge PREV, porque e indicativa e
+                                                        pode mudar. Vazio = sem fonte. */}
                                                     <td className="px-2 py-3 font-mono whitespace-nowrap">
                                                         {r.Data_Booking ? (
-                                                            <span className="inline-flex items-center gap-1">
-                                                                <span className="text-indigo-700 dark:text-indigo-300 font-semibold">{r.Data_Booking}</span>
-                                                                <span
-                                                                    className={`text-[9px] px-1 py-0.5 rounded border ${r.Booking_Fonte === "emissao"
-                                                                        ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/30"
-                                                                        : "bg-slate-500/10 text-slate-500 dark:text-slate-400 border-slate-400/30"}`}
-                                                                    title={r.Booking_Fonte === "emissao"
-                                                                        ? "Data de emissão declarada nos campos da CVM/SRE — disponível antes da liquidação"
-                                                                        : "Protocolo do requerimento / Comunicado ao Mercado — proxy do Aviso ao Mercado"}
-                                                                >
-                                                                    {r.Booking_Fonte === "emissao" ? "EMI" : "AVM"}
+                                                            r.Booking_Fonte === "REG" ? (
+                                                                <span className="text-indigo-700 dark:text-indigo-300 font-semibold" title="Registro automático já concedido pela CVM — data confirmada">
+                                                                    {r.Data_Booking}
                                                                 </span>
-                                                            </span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center gap-1">
+                                                                    <span className="text-amber-600 dark:text-amber-400 font-semibold">{r.Data_Booking}</span>
+                                                                    <span
+                                                                        className="text-[9px] px-1 py-0.5 rounded border bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                                                                        title="Data prevista no cronograma do Aviso ao Mercado — oferta ainda em bookbuilding, sujeita a alteração"
+                                                                    >
+                                                                        PREV
+                                                                    </span>
+                                                                </span>
+                                                            )
                                                         ) : (
-                                                            <span className="text-slate-400 dark:text-slate-600" title="Oferta sem data de emissão nem protocolo na base CVM">&mdash;</span>
+                                                            <span className="text-slate-400 dark:text-slate-600" title="Sem registro concedido e sem cronograma no Aviso ao Mercado">&mdash;</span>
                                                         )}
                                                     </td>
                                                     <td className="px-2 py-3 font-semibold text-slate-900 dark:text-white max-w-[200px] truncate" title={r.Emissor}>
@@ -2092,7 +2121,14 @@ const App = () => {
                                 <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 gap-2">
                                     <div>
                                         <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">Histórico de volume ano a ano por indexador (R$ Bi)</h3>
-                                        <p className="text-xs text-slate-500 dark:text-slate-400">Barras empilhadas exibindo a divisão anual entre CDI/DI, IPCA e PRÉ Prefixado</p>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                            Barras empilhadas exibindo a divisão anual entre CDI/DI, IPCA e PRÉ Prefixado
+                                            {overviewCharts.yearly_indexer.ytd_corte && (
+                                                <span className="ml-1 text-indigo-600 dark:text-indigo-400 font-semibold">
+                                                    &mdash; janela YTD: 01/01 a {overviewCharts.yearly_indexer.ytd_corte.split("-").reverse().join("/")} de cada ano
+                                                </span>
+                                            )}
+                                        </p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">
                                         <span className="flex items-center space-x-1.5 text-indigo-600 dark:text-indigo-400"><span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span><span>CDI/DI</span></span>
@@ -2136,6 +2172,9 @@ const App = () => {
                                         </h3>
                                         <p className="text-xs text-slate-500 dark:text-slate-400">
                                             Compara o volume de emissões entre os anos selecionados, separado por indexador. Afetado por todos os filtros (exceto Data/Ano).
+                                            <span className="ml-1 text-indigo-600 dark:text-indigo-400 font-semibold">
+                                                &mdash; janela YTD: 01/01 a {ytdCorte().split("-").reverse().join("/")} de cada ano
+                                            </span>
                                         </p>
                                     </div>
                                     <div className="flex items-center space-x-4 text-xs font-mono">

@@ -17,6 +17,32 @@ function toList(val) {
     return items;
 }
 
+// ============================ CORTE YTD (Year-to-Date) ======================
+// Comparar o ano corrente (parcial) contra anos anteriores (completos) infla os
+// anteriores e a leitura da mesa fica errada. O corte iguala a janela: de cada
+// ano so entra o periodo de 01/01 ate o dia e mes de hoje.
+//
+// MATEMATICA DAS DATAS
+// As datas chegam como "AAAA-MM-DD" (ISO, zero-padded). Nesse formato o sufixo
+// "MM-DD" e comparavel como STRING: a ordem lexicografica coincide com a ordem
+// cronologica dentro do ano, porque todos os campos tem largura fixa. Entao
+// basta exigir  data.slice(5,10) <= corte, onde corte = "MM-DD" de hoje.
+// Sem parse de Date, sem fuso horario, sem aritmetica de milissegundos.
+//
+// Bissexto sai de graca: com hoje = "02-28" num ano nao-bissexto, "02-29" > "02-28"
+// e fica de fora; a partir de "03-01" ele entra. Nenhum caso especial necessario.
+//
+// ytdCorte() e recalculado a cada chamada (e nao cacheado no modulo) para que a
+// virada de dia num SPA aberto por muito tempo seja refletida.
+export const ytdCorte = (ref = new Date()) =>
+    `${String(ref.getMonth() + 1).padStart(2, "0")}-${String(ref.getDate()).padStart(2, "0")}`;
+
+export const dentroYTD = (dataISO, corte) => {
+    const d = String(dataISO || "");
+    if (d.length < 10) return false;
+    return d.slice(5, 10) <= corte;
+};
+
 export function filtrar(rows, filtros) {
     const anoList = toList(filtros.ano || "Recentes (2023-2026)");
     const ritoList = toList(filtros.rito);
@@ -276,6 +302,7 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
     const monthlyVol = {};
     const monthlyIdx = {};
     const yearlyIdx = {};
+    const corteYTD = ytdCorte();   // "MM-DD" de hoje, recalculado a cada agregacao
     const spreadCdi = {};
     const spreadIpca = {};
     const cdiPoints = [];
@@ -326,12 +353,17 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
             else if (il.includes("pré") || il.includes("pre")) monthlyIdx[dt].PRE += v;
             else monthlyIdx[dt].OUTROS += v;
 
-            const yr = dt.substring(0, 4);
-            if (!yearlyIdx[yr]) yearlyIdx[yr] = { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 };
-            if (il.includes("cdi") || il.includes("di")) yearlyIdx[yr].CDI += v;
-            else if (il.includes("ipca") || il.includes("infla") || il.includes("inpc")) yearlyIdx[yr].IPCA += v;
-            else if (il.includes("pré") || il.includes("pre")) yearlyIdx[yr].PRE += v;
-            else yearlyIdx[yr].OUTROS += v;
+            // YTD: so entra no comparativo anual quem esta dentro da janela
+            // 01/01..hoje do respectivo ano. As series MENSAIS acima seguem
+            // completas de proposito -- ali o corte nao faria sentido.
+            if (dentroYTD(r.data, corteYTD)) {
+                const yr = dt.substring(0, 4);
+                if (!yearlyIdx[yr]) yearlyIdx[yr] = { CDI: 0, IPCA: 0, PRE: 0, OUTROS: 0 };
+                if (il.includes("cdi") || il.includes("di")) yearlyIdx[yr].CDI += v;
+                else if (il.includes("ipca") || il.includes("infla") || il.includes("inpc")) yearlyIdx[yr].IPCA += v;
+                else if (il.includes("pré") || il.includes("pre")) yearlyIdx[yr].PRE += v;
+                else yearlyIdx[yr].OUTROS += v;
+            }
         }
 
         // Vencimento x Spread
@@ -430,7 +462,8 @@ export function calcularChartsOverview(rows, modoCoordenador = "lider") {
             cdi: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].CDI),
             ipca: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].IPCA),
             pre: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].PRE),
-            outros: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].OUTROS)
+            outros: Object.keys(yearlyIdx).sort().map(y => yearlyIdx[y].OUTROS),
+            ytd_corte: corteYTD
         },
         top_coordenadores: {
             labels: topLideresList.map(x => x.label),
